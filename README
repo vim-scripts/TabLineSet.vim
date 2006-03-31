@@ -1,0 +1,59 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=1507
+
+Screenshot link:  http://www.geocities.com/eric_p_arnold/TabLineSet_eg.html
+
+See feedback tip#1239   http://vim.sourceforge.net/tips/tip.php?tip_id=1239
+ 
+Synopsis:
+
+    -   Configurable, intelligent/dynamic tab field sizing.
+
+    -   See all buffers loaded in windows in all tabs.
+
+    -   New colorscheme and general presentation.  The highlighting groups are
+        defined at the end of the script.  Tweak as desired.
+
+    -   The indicator sets are customizable.
+        (It will also turn verbose mode off automatically, as needed.)
+
+        You can add the   g:TabLineSet_.*   vars to your .vimrc, where you can
+        customize tab min/max, etc., and these these indicators:
+            modified        : whether any window in the tab needs saving
+            windows         : window count in the tab
+            buffers_list    : tab label contains comma list of buffers contained
+            closers         : add hot spots ("!") to the tab for click-to-close
+
+            These are mostly for development, but might be useful otherwise:
+            tabnr           : include the tab number for the selected tab/window
+            winnr           : ... window number
+            bufnr           : ... buffer number
+            filler_func     : tell it to use   g:TabLineSetFillerFunc   to
+                              contain the name of a function to be evaluated
+                              at runtime.  It's proof of concept, mostly.
+
+
+    -   You can add these mappings to your .vimrc to control the verbose
+        settings on the fly:
+
+        The first one toggles all indicators off:
+
+            nmap <Leader>tv :call TabLineSet_verbose_toggle()<CR>
+
+        The second rotates through a list of option settings which
+        configurable/extensible via g:TabLineSet_verbose_sets.  See below.
+
+            nmap <Leader>tr :call TabLineSet_verbose_rotate()<CR>
+
+    -   Additional customization can be done via the filter lists.  These are
+        more complex, requiring use of regex's and such, but they allow you to
+        make arbitrary changes to the TabLine string at runtime.
+
+    -   You have the choice of editing stuff in place here, but it might be
+        better to copy the vars and highlights of interest into your .vimrc .
+        I think I've isolated it all to be easy to cut and paste, maybe.
+
+    -   Finally, the ultimate customization:  dink around with the script
+        yourself :-)
+
+
+
