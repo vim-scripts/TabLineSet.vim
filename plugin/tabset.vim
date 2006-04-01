@@ -5,11 +5,31 @@
 " tabset.vim
 " 
 " Author:		Eric Arnold ( eric_p_arnold in_the_vicinity_of yahoo.com )
-" Last Change:	Fri Mar 31, 03/31/2006 9:28:50 PM
+" Last Change:	Sat Apr 01, 04/01/2006 2:53:43 AM
 " Requires:		Vim 7
-" Version: 		1.1
+" Version: 		1.2
 "
 " Acknowledgements:	The skeleton came from the help pages.
+"
+" Synopsis:
+"
+"	The goals:  1) a good alternate tabline configuration script, and 2) a
+"	starter script, for those wishing to customize their tabline, which
+"	more detailed example than that in the help docs.
+"
+"	-	It does configurable dynamic field sizing.
+"
+"	-	The colorscheme and general presentation are more detailed than
+"		the default.
+"
+"	-	There is a config var to turn on/off all the extra indicators.
+"		It will also turn verbose mode off when too many tabs are squeezing
+"		available space.
+"
+"	-	Added a tab-exit button to each tab (the red "!").
+
+
+ 
 
 if v:version >= 700
 else
@@ -17,13 +37,15 @@ else
 	finish
 endif
 
-let g:TabSet_min = 4		" minimum tab width
-let g:TabSet_max = 999		" maximun tab width
-let g:TabSet_verbose = 1	" control the page count and modified alert
+let g:TabSet_min = 4			" minimum tab width
+let g:TabSet_max = 999			" maximun tab width
+let g:TabSet_verbose = 1		" control the page count and modified alert
+let g:TabSet_verbose_auto = 7	" turn off verbose at this tab width
 
 
 
 function! MyTabLine()
+	let verbose = g:TabSet_verbose
 	let tabline_out = ''
 	for pagenum in range( 1, tabpagenr('$') )
 
@@ -37,43 +59,45 @@ function! MyTabLine()
 		for bufnum in buflist
 			if getbufvar( bufnum,  '&modified' ) != 0
 				let modded = '+'
-			else
 			endif
 		endfor
 
-		let is_selected = 0
-		if pagenum == tabpagenr()
-			let is_selected = 1
-		endif
+		let is_selected = pagenum == tabpagenr()
 
 		let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
 
 		" set the tab page number (for mouse clicks)
-		" let tabline_out .= '%' . (pagenum + 1) . 'T'
 		let tabline_out .= '%' . ( pagenum ) . 'T'
 
 
+		let numtabs = tabpagenr('$')
+		" account for space padding between tabs, and the "close" button
+		let maxlen = ( &columns - ( numtabs * 3 ) - 2 ) / numtabs
+		if maxlen > g:TabSet_max
+			let maxlen =  g:TabSet_max
+		endif
+		if maxlen < g:TabSet_verbose_auto
+			let verbose = 0
+		endif
+
 		" Add an indicator that some buffer in the tab is modified:
 		let tablabel = ''
-		if g:TabSet_verbose && modded != ''
+		if verbose && modded != ''
 			let tablabel .= '%#TabModded#' . modded
 			let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
+			let maxlen = maxlen - 1
 		endif
 
 
 		" Show the number of windows in the tab:
-		let numtabs = tabpagenr('$')
-		" account for space padding between tabs, and the "close" button
-		let maxlen = ( &columns - ( numtabs * 2 ) - 4 ) / numtabs
-		if maxlen > g:TabSet_max
-			let maxlen =  g:TabSet_max
-		endif
-		if g:TabSet_verbose && len( buflist ) > 1
+		if verbose && len( buflist ) > 1
+			let numwins = tabpagewinnr( pagenum, ("$") )
 			let tablabel .= '(' 
 				\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
-				\ . tabpagewinnr( pagenum, ("$") )
+				\ . numwins
 				\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 				\ . ')'
+			let maxlen = maxlen - strlen('(' . numwins . ')')
 		endif
 
 
@@ -83,24 +107,40 @@ function! MyTabLine()
 		if tabbufname == ''
 			let tabbufname = '[No Name]'
 		endif
-		while strlen( tabbufname ) < g:TabSet_min
-			let tabbufname = tabbufname . " "
+		" Pad to _min
+		let len = strlen( tabbufname )
+		while strlen( tabbufname ) < g:TabSet_min 
+					\ && strlen( tabbufname )< maxlen
+			let tabbufname = tabbufname . ' '
 		endwhile
 		let tabbufname = fnamemodify( tabbufname, ':t' )
 
-		let tablabel .= strpart( tabbufname, 0,  maxlen )
+		let tabexit = ''
+		if verbose 
+			let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
+						\ . '%' . pagenum . 'X!%X'
+			let maxlen = maxlen - 1
+		endif
 
+		let tabbufname = strpart( tabbufname, 0,  maxlen )
 
-		let tabline_out .= tablabel . ' |'
+		let tablabel .= ' ' . tabbufname
 
+		let tabline_out .= tablabel  . ' '
+
+		let tabline_out .= tabexit
+
+		let tabline_out .= '%#TabSep#' . '|'
+					\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 
 	endfor
+
 
 	" after the last tab fill with TabLineFill and reset tab page nr
 	let tabline_out .= '%#TabLineFill#%T'
 
 	" right-align the label to close the current tab page
-	if tabpagenr('$') > 1
+	if tabpagenr('$') > 1 && verbose == 0
 		let tabline_out .= '%=%#TabLine#%999X X'
 	endif
 
@@ -108,11 +148,8 @@ function! MyTabLine()
 endfunction
 
 
-
-
-function! MyTabLabel( pagenum )
-endfunction
-
+"function! MyTabLabel( pagenum )
+"endfunction
 
 
 
@@ -133,10 +170,21 @@ hi! MyTabLineFill term=underline cterm=underline gui=underline
 hi! MyTabLineSel  term=bold,reverse,underline 
 			\ ctermfg=11 ctermbg=12 guifg=#ffff00 guibg=#0000ff gui=underline
 
-hi! TabModded term=underline,bold ctermfg=12 guifg=Red
-			\  cterm=underline gui=underline ctermbg=8 guibg=DarkGrey
+hi! TabModded term=underline 
+			\ cterm=underline ctermfg=black ctermbg=yellow
+			\ gui=underline guifg=black guibg=#c0c000
 
-hi! link TabModded Error
+
+"hi! TabExit term=underline,bold ctermfg=12 guifg=white guibg=#ff0000 " red
+hi! TabExit term=underline,bold ctermfg=12 guifg=#ff0000 guibg=darkgrey
+			\  cterm=underline gui=underline ctermbg=8
+hi! TabExitSel gui=underline term=underline,bold guifg=#ff0000 guibg=blue
+			\  cterm=underline ctermbg=12 ctermfg=12
+
+
+hi! TabSep term=reverse,standout,underline cterm=reverse,standout,underline
+			\ gui=reverse,standout,underline
+
 
 hi! link TabLineFill MyTabLineFill
 hi! link TabLineSel  MyTabLineSel
