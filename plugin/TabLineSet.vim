@@ -44,6 +44,12 @@
 "			nmap <Leader>tv :call TabLineSet_verbose_toggle()<CR>
 "			nmap <Leader>tr :call TabLineSet_verbose_rotate()<CR>
 "
+" Issues:
+"
+" 	-	If it doesn't initialize the highlighting properly upon starting up,
+" 		it is probably conflicting with a colorscheme or something.  If you
+" 		can't find the conflict, try uncommenting the TabEnter autocommand
+" 		near the end of the script.
 " }}}
 
  
@@ -280,64 +286,66 @@ if &showtabline < 1
 	set showtabline=1	" 2=always
 endif
 
-"							*cterm-colors*
-"	    NR-16   NR-8    COLOR NAME ~
-"	    0	    0	    Black
-"	    1	    4	    DarkBlue
-"	    2	    2	    DarkGreen
-"	    3	    6	    DarkCyan
-"	    4	    1	    DarkRed
-"	    5	    5	    DarkMagenta
-"	    6	    3	    Brown, DarkYellow
-"	    7	    7	    LightGray, LightGrey, Gray, Grey
-"	    8	    0*	    DarkGray, DarkGrey
-"	    9	    4*	    Blue, LightBlue
-"	    10	    2*	    Green, LightGreen
-"	    11	    6*	    Cyan, LightCyan
-"	    12	    1*	    Red, LightRed
-"	    13	    5*	    Magenta, LightMagenta
-"	    14	    3*	    Yellow, LightYellow
-"	    15	    7*	    White
-"
-"	The number under "NR-16" is used for 16-color terminals ('t_Co'
+function! TabLineSet_hl_init()
+	"							*cterm-colors*
+	"	    NR-16   NR-8    COLOR NAME ~
+	"	    0	    0	    Black
+	"	    1	    4	    DarkBlue
+	"	    2	    2	    DarkGreen
+	"	    3	    6	    DarkCyan
+	"	    4	    1	    DarkRed
+	"	    5	    5	    DarkMagenta
+	"	    6	    3	    Brown, DarkYellow
+	"	    7	    7	    LightGray, LightGrey, Gray, Grey
+	"	    8	    0*	    DarkGray, DarkGrey
+	"	    9	    4*	    Blue, LightBlue
+	"	    10	    2*	    Green, LightGreen
+	"	    11	    6*	    Cyan, LightCyan
+	"	    12	    1*	    Red, LightRed
+	"	    13	    5*	    Magenta, LightMagenta
+	"	    14	    3*	    Yellow, LightYellow
+	"	    15	    7*	    White
+	"
+	"	The number under "NR-16" is used for 16-color terminals ('t_Co'
 
-hi! TabWinNum term=bold,underline cterm=underline gui=bold,underline
-			\ ctermfg=green guifg=Green ctermbg=darkgrey guibg=DarkGrey
+	hi! TabWinNum term=bold,underline cterm=underline gui=bold,underline
+				\ ctermfg=green guifg=Green ctermbg=darkgrey guibg=DarkGrey
 
-hi! TabWinNumSel term=bold,underline cterm=underline gui=bold,underline
-			\ ctermfg=magenta ctermbg=blue guifg=Magenta guibg=#0000ff
+	hi! TabWinNumSel term=bold,underline cterm=underline gui=bold,underline
+				\ ctermfg=magenta ctermbg=blue guifg=Magenta guibg=#0000ff
 
-hi! MyTabLineFill term=underline cterm=underline gui=underline
+	hi! MyTabLineFill term=underline cterm=underline gui=underline
 
-hi! TabLineFillEnd term=underline cterm=underline gui=underline
-			\ ctermfg=white ctermbg=black guifg=white guibg=black
+	hi! TabLineFillEnd term=underline cterm=underline gui=underline
+				\ ctermfg=white ctermbg=black guifg=white guibg=black
 
-hi! MyTabLineSel  term=bold,reverse,underline 
-			\ ctermfg=white ctermbg=blue guifg=#ffff00 guibg=#0000ff gui=underline
-
-
-hi! TabModded term=underline 
-			\ cterm=underline ctermfg=black ctermbg=yellow
-			\ gui=underline guifg=black guibg=#c0c000
+	hi! MyTabLineSel  term=bold,reverse,underline 
+				\ ctermfg=white ctermbg=blue guifg=#ffff00 guibg=#0000ff gui=underline
 
 
-hi! TabExit term=underline,bold ctermfg=red guifg=#ff0000 guibg=darkgrey
-			\  cterm=underline gui=underline 
-
-hi! TabExitSel gui=underline term=underline,bold guifg=#ff0000 guibg=blue
-			\  cterm=underline ctermfg=red ctermbg=blue
-
-hi! TabSep term=reverse,standout,underline cterm=reverse,standout,underline
-			\ gui=reverse,standout,underline
-			\ ctermfg=black ctermbg=white
+	hi! TabModded term=underline 
+				\ cterm=underline ctermfg=black ctermbg=yellow
+				\ gui=underline guifg=black guibg=#c0c000
 
 
-hi! link TabLineFill MyTabLineFill
-hi! link TabLineSel  MyTabLineSel
+	hi! TabExit term=underline,bold ctermfg=red guifg=#ff0000 guibg=darkgrey
+				\  cterm=underline gui=underline 
+
+	hi! TabExitSel gui=underline term=underline,bold guifg=#ff0000 guibg=blue
+				\  cterm=underline ctermfg=red ctermbg=blue
+
+	hi! TabSep term=reverse,standout,underline cterm=reverse,standout,underline
+				\ gui=reverse,standout,underline
+				\ ctermfg=black ctermbg=white
+
+
+	hi! link TabLineFill MyTabLineFill
+	hi! link TabLineSel  MyTabLineSel
+endfunction
 
 " Do this to make sure it sticks after other startup highlighting is
 " complete:
-autocmd GUIEnter * hi! link TabLineFill MyTabLineFill
-autocmd GUIEnter * hi! link TabLineSel  MyTabLineSel
+autocmd GUIEnter * call TabLineSet_hl_init()
+"autocmd TabEnter * call TabLineSet_hl_init()
 
 " vim7:fdm=marker:foldenable:ts=4:sw=4:foldclose=
