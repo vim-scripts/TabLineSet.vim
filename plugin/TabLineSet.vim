@@ -4,7 +4,7 @@
 "
 " 
 " Author:		Eric Arnold ( eric_p_arnold in_the_vicinity_of yahoo.com )
-" Last Change:	Sun Apr 02, 04/02/2006 1:36:01 AM
+" Last Change:	Mon Apr 03, 04/03/2006 6:46:59 AM
 " Requires:		Vim 7
 " Version: 		1.2		Sat Apr 01, 04/01/2006 2:53:43 AM
 " Version: 		1.3		Sun Apr 02, 04/02/2006 1:36:01 AM
@@ -13,36 +13,41 @@
 " 						- Changed the name of the script from tabset.vim
 " 						- Solidified the non-GUI color scheme.
 "						- Started some hooks to customize slack area.
+" Version: 		1.4		Mon Apr 03, 04/03/2006 6:47:11 AM
+"						- added comma list of buffers contained in tab
+"						- changed toggle and rotate mapping functions to
+"						  handle multiple option sets to switch through
 "
 " Acknowledgements:	The skeleton came from the help pages.
 "
 " Synopsis:
 "
-"	The goals:  1) a good alternate tabline configuration script, and 2) a
-"	starter script, for those wishing to customize their tabline with a
-"	more detailed example than that in the help docs.
-"
 "	-	Configurable, intelligent/dynamic tab field sizing.
 "
 "	-	New colorscheme and general presentation.
 "
-"	-	Config variable to turn on/off all the extra indicators.  See start
-"		of script for all vars.
-"		(It will also turn verbose mode off automatically when too many tabs
-"		are squeezing available space.)
-"		You can add the  g:TabLineSet...  vars to your .vimrc, where you can
+"	-	The indicator sets are customizable.
+"		(It will also turn verbose mode off automatically, as needed.)
+"
+"		You can add the   g:TabLineSet_.*   vars to your .vimrc, where you can
 "		customize tab min/max, etc., and these these indicators:
-"		- modified	: whether any window in the tab has been modified/not-saved
-"		- windows	: window count in the tab
-"		- closers	: add hot spots ("!") to the tab for click-to-close
-"		These are mostly for development:
-"			- tabnr		: include the tab number for the selected tab/window
-"			- winnr		: ... window number
-"			- bufnr		: ... buffer number
+"			modified		: whether any window in the tab needs saving
+"			windows			: window count in the tab
+"			buffers_list	: tab label contains comma list of buffers contained
+"			closers			: add hot spots ("!") to the tab for click-to-close
+"			These are mostly for development:
+"			tabnr			: include the tab number for the selected tab/window
+"			winnr			: ... window number
+"			bufnr			: ... buffer number
+"
+"
 "		You can add these mappings to your .vimrc to control the verbose
 "		settings on the fly:
 "			nmap <Leader>tv :call TabLineSet_verbose_toggle()<CR>
 "			nmap <Leader>tr :call TabLineSet_verbose_rotate()<CR>
+"
+"		You can change the option sets it rotates through, via the nested
+"		list:   g:TabLineSet_verbose_sets
 "
 " Issues:
 "
@@ -56,169 +61,269 @@
 
 if v:version >= 700
 else
-	echomsg "Vim 7 or higher is required for TabLineSet.vim.vim"
+	echomsg "Vim 7 or higher is required for TabLineSet.vim"
 	finish
 endif
 
 let g:TabLineSet_min = 4			" minimum tab width (space padded)
+let g:TabLineSet_min2 = 4			" ... used for 'buffers_list'
 let g:TabLineSet_max = 999			" maximun tab width
 let g:TabLineSet_verbose_auto = 7	" turn on/off verbose at this tab width
-let g:TabLineSet_verbose = 'modified,windows,closers'
-								" Toggle the indicator chars on/off.
-								" Valid options:
-let s:verbose_options = [ 'modified', 'windows', 'closers', 
-						\ 'tabnr', 'winnr', 'bufnr' ]
 
-let g:TabLineSetFillerFunc = 'TabLineSetFillerNull' " 'TabLineSetFillerTest'
+" Masterlist:
+let s:verbose_options = 
+	\ [ 
+	\	'modified', 'windows', 'buffers_list', 'closers', 
+	\	'tabnr', 'winnr', 'bufnr', 'filler_func'
+	\ ]
+
+let g:TabLineSet_verbose_sets = 
+	\ [
+		\ [ 'modified', 'windows', 'buffers_list', 'closers', 'filler_func' ],
+		\ [ 'modified', 'windows', 'closers' ],
+		\ [ 'buffers_list' ],
+		\ [ ],
+		\ s:verbose_options
+	\ ]
+
+
+let g:TabLineSet_verbose = join( g:TabLineSet_verbose_sets[0], ',' )
+
+
+let g:TabLineSetFillerFunc = 'TabLineSetFillerTest'
 								" Use the filler func to doddle in the ending
 								" space in the tabline.
 
 
 
 function! TabLineSet_main()
-	"let [bufnum, lnum, col, off] = getpos( "." )
-	"echomsg '[bufnum, lnum, col, off] = ' . string( [bufnum, lnum, col, off] )
-
+	
 	let verbose = g:TabLineSet_verbose
-	let tabline_out = ''
-	let tabline_pos = 0
-	for tabnum in range( 1, tabpagenr('$') )
+	let avail = winwidth( winnr() )
 
-		let buflist = []
-		let buflist = tabpagebuflist( tabnum )
-		if len( buflist ) < 1
-			continue
-		endif
+	let numtabs = tabpagenr('$')
+	" account for space padding between tabs, and the "close" button
+	let maxlen = ( &columns - ( numtabs * 3 ) 
+				\ - ( verbose == '' ? 2 : 0 ) ) / numtabs
+	if maxlen > g:TabLineSet_max
+		let maxlen =  g:TabLineSet_max
+	endif
+	if maxlen < g:TabLineSet_verbose_auto
+		let verbose = ''
+	endif
 
-		let modded = ''
-		for bufnum in buflist
-			if getbufvar( bufnum,  '&modified' ) != 0
-				let modded = '+'
+	let maxlen_start = maxlen
+
+	" Loop to extend maxlen
+	let maxloop = 10
+	while ( maxloop > 0 ) && ( avail > 1 ) 
+				\ && ( maxlen_start < winwidth( winnr() ) )
+		let maxloop = maxloop - 1
+
+		let maxlen = maxlen_start
+
+		let tabline_out = ''
+		let tabline_pos = 0
+		for tabnum in range( 1, tabpagenr('$') )
+
+			let buflist = []
+			let buflist = tabpagebuflist( tabnum )
+			if len( buflist ) < 1
+				continue
 			endif
-		endfor
 
-		let is_selected = tabnum == tabpagenr()
+			let modded = ''
+			for bufnum in buflist
+				if getbufvar( bufnum,  '&modified' ) != 0
+					let modded = '+'
+				endif
+			endfor
 
-		let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
+			let is_selected = tabnum == tabpagenr()
 
-		" set the tab page number (for mouse clicks)
-		let tabline_out .= '%' . ( tabnum ) . 'T'
+			let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
 
-
-		let numtabs = tabpagenr('$')
-		" account for space padding between tabs, and the "close" button
-		let maxlen = ( &columns - ( numtabs * 3 ) 
-					\ - ( verbose == '' ? 2 : 0 ) ) / numtabs
-		if maxlen > g:TabLineSet_max
-			let maxlen =  g:TabLineSet_max
-		endif
-		if maxlen < g:TabLineSet_verbose_auto
-			let verbose = ''
-		endif
-
-		" Add an indicator that some buffer in the tab is modified:
-		let tablabel = ''
-		if verbose =~ 'modified' && modded != ''
-			let tablabel .= '%#TabModded#' . modded
-			let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
-			let maxlen = maxlen - 1
-		endif
-
-		let winnr = tabpagewinnr( tabnum )
-
-		" Show the number of windows in the tab:
-		let numwins_out = ''
-		if verbose =~ 'windows'  && len( buflist ) > 1
-			let numwins_out = tabpagewinnr( tabnum, ("$") )
-			let maxlen = maxlen - strlen('(' . numwins_out . ')')
-		endif
-
-		let tabnr_out = ''
-		if verbose =~ 'tabnr' && is_selected
-			let tabnr_out .= 't' . tabnum 
-			let maxlen = maxlen - strlen( tabnr_out )
-		endif
-
-		let winnr_out = ''
-		if verbose =~ 'winnr' && is_selected
-			let winnr_out .= 'w' . winnr 
-			let maxlen = maxlen - strlen( winnr_out )
-		endif
-
-		let bufnr_out = ''
-		if verbose =~ 'bufnr' && is_selected
-			let bufnr_out .= 'b' . winbufnr( winnr )
-			let maxlen = maxlen - strlen( bufnr_out )
-		endif
+			" set the tab page number (for mouse clicks)
+			let tabline_out .= '%' . ( tabnum ) . 'T'
 
 
-		let out_list = [ numwins_out, tabnr_out, winnr_out, bufnr_out ]
-		let out_list = filter( out_list, 'v:val != "" ' )
-		if len( out_list ) > 0
-			let tablabel .= '(' 
-						\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
-						\ . join( out_list , ',' )
-						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-						\ . ')'
-			let tabline_pos = tabline_pos + 
-						\ strlen( '(' . join( out_list , ',' ) . ')' )
-		endif
+			" Add an indicator that some buffer in the tab is modified:
+			let tablabel = ''
+			if verbose =~ 'modified' && modded != ''
+				let tablabel .= '%#TabModded#' . modded
+				let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
+				let maxlen = maxlen - 1
+			endif
 
-		" Add the buffer name:
-		let tabbufname = bufname(buflist[winnr - 1])
-		if tabbufname == ''
-			let tabbufname = '[No Name]'
-		endif
-		" Pad to _min
-		let len = strlen( tabbufname )
-		while strlen( tabbufname ) < g:TabLineSet_min 
-					\ && strlen( tabbufname )< maxlen
-			let tabbufname = tabbufname . ' '
-		endwhile
-		let tabbufname = fnamemodify( tabbufname, ':t' )
+			let winnr = tabpagewinnr( tabnum )
+			let numwins = tabpagewinnr( tabnum, ("$") )
 
-		let tabexit = ''
-		if verbose =~ 'closers'
-			let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
-						\ . '%' . tabnum . 'X!%X'
-			let maxlen = maxlen - 1
-			let tabline_pos = tabline_pos + 1
-		endif
 
-		let tabbufname = strpart( tabbufname, 0,  maxlen )
-		let tabline_pos = tabline_pos + strlen( tabbufname )
+			" --------------------
+			" Misc values, i.e. the number of windows in the tab:
+			let numwins_out = ''
+			if verbose =~ 'windows'  && len( buflist ) > 1
+				let numwins_out = numwins
+				let maxlen = maxlen - strlen( numwins_out )
+			endif
 
-		let tablabel .= ' ' . tabbufname
+			let tabnr_out = ''
+			if verbose =~ 'tabnr' && is_selected
+				let tabnr_out .= 't' . tabnum 
+				let maxlen = maxlen - strlen( tabnr_out )
+			endif
 
-		let tabline_out .= tablabel  . ' '
+			let winnr_out = ''
+			if verbose =~ 'winnr' && is_selected
+				let winnr_out .= 'w' . winnr 
+				let maxlen = maxlen - strlen( winnr_out )
+			endif
 
-		let tabline_out .= tabexit
+			let bufnr_out = ''
+			if verbose =~ 'bufnr' && is_selected
+				let bufnr_out .= 'b' . winbufnr( winnr )
+				let maxlen = maxlen - strlen( bufnr_out )
+			endif
 
-		let tabline_out .= '%#TabSep#' . '|'
+
+			let out_list = [ numwins_out, tabnr_out, winnr_out, bufnr_out ]
+			let out_list = filter( out_list, 'v:val != "" ' )
+			if len( out_list ) > 0
+				let tablabel .= '(' 
+							\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
+							\ . join( out_list , ',' )
+							\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+							\ . ')'
+				let tabline_pos = tabline_pos + 
+							\ strlen( '(' . join( out_list , ',' ) . ')' )
+			endif
+			" end misc values
+
+
+			" --------------------
+			"  Add buffer name(s)
+			let winnr_start = 1
+			let winnr_stop = numwins
+			if verbose !~ 'buffers_list'
+				let winnr_start = winnr
+				let winnr_stop = winnr
+			endif
+
+			" subtract - numwins   to accound for commas:
+			let maxlen1 = ( ( maxlen - numwins + 1 ) / numwins )
+			if maxlen1 < g:TabLineSet_min2 
+				let winnr_start = winnr
+				let winnr_stop = winnr
+			endif
+
+			let bufname_list = []
+			let adj_maxlen = 0
+			for winnr1 in range( winnr_start, winnr_stop )
+				let tabbufname = bufname( buflist[ winnr1 - 1] )
+				let tabbufname = fnamemodify( tabbufname, ':t' )
+				if tabbufname == ''
+					let tabbufname = '[No Name]'
+				endif
+				call add( bufname_list, tabbufname )
+			endfor
+
+			" shrink the names in the list a bit/byte at a time, so the space
+			" is distributed evenly:
+			let tabbufnames = join( bufname_list, ',' )
+			while strlen( tabbufnames ) > maxlen
+				let longest = 0
+				let which = 0
+				for i in range( 0, len( bufname_list ) - 1 )
+					if strlen( bufname_list[ i ] ) > longest
+						let which = i
+						let longest = strlen( bufname_list[ i ] )
+					endif
+				endfor
+				let b = bufname_list[ which ]
+				let bufname_list[ which ] = strpart( b, 0, strlen( b ) - 1 )
+				let tabbufnames = join( bufname_list, ',' )
+			endwhile
+
+			call map( bufname_list, 'strpart( v:val, 0,  maxlen1 )' )
+
+			let sep = ''
+					\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
+					\ . ','
 					\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 
-		let tabline_pos = tabline_pos + 3
+			let tabbufnames = join( bufname_list, ',' )
 
-	endfor
+			" Pad to _min
+			let len = strlen( tabbufnames )
+			while strlen( tabbufnames ) < g:TabLineSet_min 
+						\ && strlen( tabbufnames )< maxlen
+				let tabbufnames = tabbufnames . ' '
+			endwhile
+
+			"let tabbufnames = strpart( tabbufnames, 0,  maxlen )
+			let tabline_pos = tabline_pos + strlen( tabbufnames )
+
+			let sep = ''
+					\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
+					\ . ','
+					\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+
+			let tabbufnames = join( bufname_list, sep )
+
+			" end bufnames section
 
 
-	" after the last tab fill with TabLineFill and reset tab page nr
-	let tabline_out .= '%#TabLineFillEnd#%T'
+			" --------------------
+			"  Closers
+			let tabexit = ''
+			if verbose =~ 'closers'
+				let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
+							\ . '%' . tabnum . 'X!%X'
+				let maxlen = maxlen - 1
+				let tabline_pos = tabline_pos + 1
+			endif
 
 
-	" right-align the label to close the current tab page
-	let last_close = ''
-	if tabpagenr('$') > 1 && verbose == ''
-		let last_close = '%=%#TabLine#%999X X'
-	endif
+			" --------------------
+			"  Put the pieces together
+			let tablabel .= ' ' . tabbufnames
 
-	let avail = &columns - tabline_pos - ( last_close == '' ? 2 : 0 )
+			let tabline_out .= tablabel  . ' '
 
-	if g:TabLineSetFillerFunc != ''
-		let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . avail . ')}'
-	endif
+			let tabline_out .= tabexit
 
-	let tabline_out .= last_close
+			let tabline_out .= '%#TabSep#' . '|'
+						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+
+			let tabline_pos = tabline_pos + 3
+
+		endfor
+
+
+		" after the last tab fill with TabLineFill and reset tab page nr
+		let tabline_out .= '%#TabLineFillEnd#%T'
+
+
+		" right-align the label to close the current tab page
+		let last_close = ''
+		if tabpagenr('$') > 1 && verbose == ''
+			let last_close = '%=%#TabLine#%999X X'
+		endif
+
+		let avail = &columns - tabline_pos - ( last_close == '' ? 2 : 0 )
+
+		if g:TabLineSetFillerFunc != '' && verbose =~ 'filler_func'
+			let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . avail . ')}'
+		endif
+
+		let tabline_out .= last_close
+
+		" too slow:
+		"let maxlen_start = maxlen_start + 1
+	
+		let maxlen_start = maxlen_start + ( avail / numtabs )
+
+	endwhile " extend maxlen
 
 	return tabline_out
 endfunction
@@ -236,15 +341,17 @@ function! TabLineSetFillerTest( avail )
 	let out = strftime( '%H:%M:%S' )
 	if strlen( out ) > a:avail
 		let out = ''
+	else
+		while strlen( out ) <= a:avail
+			let out = '.'. out
+		endwhile
 	endif
-	while strlen( out ) <= a:avail
-		let out = '.'. out
-	endwhile
 	return out
 endfunction
 
 
 let s:TabLineSet_verbose_save = ''
+
 
 function! TabLineSet_verbose_toggle()
 	if s:TabLineSet_verbose_save == ''
@@ -260,17 +367,16 @@ endfunction
 
 
 
-let s:verbose_options1 = []
-let s:verbose_options2 = []
+let s:verbose_sets_idx = 0
 
 function! TabLineSet_verbose_rotate()
-	if len( s:verbose_options2 ) == 0
-		let s:verbose_options1 = []
-		let s:verbose_options2 = deepcopy( s:verbose_options )
-	else
-		call add( s:verbose_options1, remove( s:verbose_options2, 0 ) )
+	let s:verbose_sets_idx = s:verbose_sets_idx + 1
+	if s:verbose_sets_idx > len( g:TabLineSet_verbose_sets ) - 1
+		let s:verbose_sets_idx = 0
 	endif
-	let g:TabLineSet_verbose = join( s:verbose_options1, ',' )
+
+	let g:TabLineSet_verbose = join( 
+				\g:TabLineSet_verbose_sets[ s:verbose_sets_idx ], ',' )
 	silent! normal! gtgT
 endfunction
 
