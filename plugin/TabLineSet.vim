@@ -5,8 +5,8 @@
 "
 "
 " 
-" Author:		Eric Arnold ( eric_p_arnold@@@@yahoo.com )
-" Last Change:	Mon Apr 03, 04/03/2006 6:46:59 AM
+" Author:		Eric Arnold ( eric_p_arnold@yahoo.com )
+" Last Change:	Sun Apr 16, 04/16/2006 8:06:24 AM
 " Requires:		Vim 7
 " Version: 		1.2		Sat Apr 01, 04/01/2006 2:53:43 AM
 " Version: 		1.3		Sun Apr 02, 04/02/2006 1:36:01 AM
@@ -23,6 +23,9 @@
 " 						- added filter lists
 " 						- re-arranged the close button, the window counter,
 " 						  and the (tab,win,buf) list.
+" Version: 		1.55	Sun Apr 16, 04/16/2006 8:04:17 AM
+" 						- disable the g:TabLineSetFillerFunc per the problem
+" 						  with VIm70d.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -79,6 +82,12 @@
 " Issues:
 "
 "	-	I'm sure more will show up here.
+"
+" Bugs:
+"
+" 	-	There is some problem with using the 'filler function' as of Vim70d
+" 		performance drags down because a re-eval is called for every
+" 		keystroke.
 "
 " }}}
 
@@ -162,6 +171,9 @@ let g:TabLineSet_bufname_filters = [
 		\ 	[ '\[No Name\]'		],
 		\ 	[ '^--*\(.*\)--*$',		'\1',	'' ]
 		\ ]
+		" The first example filters out all unnamed buffers.
+		" The second example filters out --minibufexplorer-- type lines that
+		" show up in all tabs if the minibufexplorer is used.
 
 
 " The following allows you to define substitutions on each tab as a whole.
@@ -178,7 +190,7 @@ let g:TabLineSet_tab_filters = [
 		" replaces them with semi-colons.
 
 
-if 0
+if 0	"  don't execute, example only
 
 " The folowing example replaces the leading "!" to include the current time
 " using the substitute special \= evaluation feature.  
@@ -227,7 +239,8 @@ let g:TabLineSet_output_post = ''
 
 " Use the filler func to doddle in the ending  space in the tabline:
 "
-let g:TabLineSetFillerFunc = 'TabLineSetFillerTest'
+"let g:TabLineSetFillerFunc = 'TabLineSetFillerTest'
+let g:TabLineSetFillerFunc = ''
 
 
 "  End config vars  
@@ -582,8 +595,10 @@ function! TabLineSetFillerNull( avail )
 endfunction
 
 
+let s:test_count = 0
 function! TabLineSetFillerTest( avail )
-	let out = strftime( '%H:%M:%S' )
+	let s:test_count += 1
+	let out = strftime( '%H:%M:%S' ) . '#' . s:test_count
 	if strlen( out ) > a:avail
 		let out = ''
 	else
@@ -710,6 +725,7 @@ function! TabLineSet_hl_init()
 endfunction
 
 " End highlighting   }}}
+
 
 
 
