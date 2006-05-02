@@ -26,6 +26,16 @@
 " Version: 		1.55	Sun Apr 16, 04/16/2006 8:04:17 AM
 " 						- disable the g:TabLineSetFillerFunc per the problem
 " 						  with VIm70d.
+" Version: 		1.56	Thu Apr 20, 04/20/2006 5:14:24 AM
+" 						- Fixed bug with verbose auto-shutoff causing infinite
+" 						  loop
+" Version: 		1.6		Mon May 01, 05/01/2006 10:40:15 AM
+" 						- Fixed problem where slow-down occurs when the
+" 						tabline function is called for every keystroke.  Use
+" 						the toggle or rotate mappings/functions to reset the
+" 						highlighting, if something clobbers it.
+" Version: 		1.61	Mon May 01, 05/01/2006 10:40:15 AM
+" 						- Really fix it this time.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -81,7 +91,10 @@
 "
 " Issues:
 "
-"	-	I'm sure more will show up here.
+"	-	There is a  problem where slow-down occurs when the tabline function
+"		is called for every keystroke.  Use the toggle or rotate
+"		mappings/functions to reset the highlighting, if something clobbers
+"		it.
 "
 " Bugs:
 "
@@ -105,6 +118,7 @@ else
 	finish
 endif
 
+let g:TabLineSet_version = 1.56
 
 if exists( 'g:no_load_TabLineSet' )		" Turn it off from .vimrc
 	finish
@@ -114,7 +128,7 @@ endif
 let g:TabLineSet_min = 4			" minimum tab width (space padded)
 let g:TabLineSet_min2 = 4			" ... used for 'buffers_list'
 let g:TabLineSet_max = 999			" maximum tab width
-let g:TabLineSet_verbose_auto = 7	" turn on/off verbose at this tab width
+let g:TabLineSet_verbose_auto = 4	" turn on/off verbose at this tab width
 
 
 " Masterlist:  do not change.
@@ -256,17 +270,65 @@ let g:TabLineSetFillerFunc = ''
 "
 " 
 
+let g:TabLineSet_debug_counter = -1
+
+let s:last_reltime = reltime()
+" Try to deal with the Vim7 bug where the tagline function starts getting
+" called for every key
+let s:bug_keycount = 0
+let s:last_winnr = winnr() 
+let s:last_tabpagenr = tabpagenr()
+let s:last_localtime = localtime()
+
+
 function! TabLineSet_main()
+
+	if !exists('s:called_hl_init')
+		let s:called_hl_init = 1
+		call TabLineSet_hl_init()
+	endif
+
+	if 0 && has( 'reltime' )
+		echomsg string( reltime() )
+		if s:bug_keycount >= 3
+			let s:bug_keycount = 0
+			let s:last_reltime = reltime()
+			call TabLineSet_verbose_toggle0()
+			"return 'Tagline bug detected'
+		endif
+
+		if ( reltime()[1] - s:last_reltime[1] ) < 5000000
+			if s:last_winnr == winnr() && s:last_tabpagenr == tabpagenr()
+				let s:bug_keycount += 1
+			endif
+		else
+			let s:bug_keycount = 0
+		endif
+		let s:last_reltime = reltime()
+		let s:last_winnr = winnr() 
+		let s:last_tabpagenr = tabpagenr()
+
+		if g:TabLineSet_debug_counter >= 0
+			echomsg "TabLineSet_main called " . g:TabLineSet_debug_counter . " times."
+			let g:TabLineSet_debug_counter += 1
+		endif
+		echomsg 'bugkey ' . s:bug_keycount
+	endif
 
 	" Call the highlight init each time, since there is no simple way of
 	" telling whether something else has trashed our highlighting, which
 	" happens all too often:
 	"
-	call TabLineSet_hl_init()
+	" Don't call the hl function each time, since it can cause the tabline
+	" function trigger for every keystroke:
+	if ( localtime() - s:last_localtime ) > 5
+		call TabLineSet_hl_init()
+	endif
+	let s:last_localtime = localtime()
 
 
 
-	let verbose = g:TabLineSet_verbose
+	let s:verbose = g:TabLineSet_verbose
 
 	"let avail = winwidth( winnr() )
 	" It always goes across whole top of screen:
@@ -276,11 +338,16 @@ function! TabLineSet_main()
 
 	" account for space padding between tabs, and the "close" button
 	let maxlen = ( &columns - ( numtabs * 3 ) 
-				\ - ( verbose == '' ? 2 : 0 ) ) / numtabs
+				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
 
 	if maxlen > g:TabLineSet_max | let maxlen =  g:TabLineSet_max | endif
 
-	if maxlen < g:TabLineSet_verbose_auto | let verbose = '' | endif
+	if maxlen < g:TabLineSet_verbose_auto 
+	   	let s:verbose = '' 
+		let maxlen = ( &columns - ( numtabs * 3 ) 
+				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
+   	endif
+
 
 	let maxlen_start = maxlen
 	let tabline_out = ''	" Don't fall out of below loop with this undefined
@@ -292,9 +359,10 @@ function! TabLineSet_main()
 				\ && ( maxlen_start < &columns )
 		let maxloop = maxloop - 1
 
-		let maxlen = maxlen_start
+		let maxlen = s:Set_maxlen( maxlen_start )
 
 		let tabline_out = ''
+
 
 
 		" g:TabLineSet_out_pos will hold the total number of chars, as they will
@@ -310,6 +378,7 @@ function! TabLineSet_main()
 			if len( buflist ) < 1
 				continue
 			endif
+
 
 			let modded = ''
 			for bufnum in buflist
@@ -333,10 +402,10 @@ function! TabLineSet_main()
 			" Add an indicator that some buffer in the tab is modified:
 			"
 			let tablabel = ''
-			if verbose =~ 'modified' && modded != ''
+			if s:verbose =~ 'modified' && modded != ''
 				let tablabel .= '%#TabModded#' . modded
 				let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
-				let maxlen = maxlen - 1
+				let maxlen = s:Set_maxlen( maxlen - 1 )
 			endif
 
 			let winnr = tabpagewinnr( tabnum )
@@ -350,27 +419,27 @@ function! TabLineSet_main()
 			"
 
 			let numwins_out = ''
-			if is_selected == 0 && verbose =~ 'windows'  && len( buflist ) > 1
+			if is_selected == 0 && s:verbose =~ 'windows'  && len( buflist ) > 1
 				let numwins_out = numwins
-				let maxlen = maxlen - strlen( numwins_out )
+				let maxlen = s:Set_maxlen( maxlen - strlen( numwins_out ) )
 			endif
 
 			let tabnr_out = ''
-			if verbose =~ 'tabnr' && is_selected
+			if s:verbose =~ 'tabnr' && is_selected
 				let tabnr_out .= 't' . tabnum 
-				let maxlen = maxlen - strlen( tabnr_out )
+				let maxlen = s:Set_maxlen( maxlen - strlen( tabnr_out ) )
 			endif
 
 			let winnr_out = ''
-			if verbose =~ 'winnr' && is_selected
+			if s:verbose =~ 'winnr' && is_selected
 				let winnr_out .= 'w' . winnr 
-				let maxlen = maxlen - strlen( winnr_out )
+				let maxlen = s:Set_maxlen( maxlen - strlen( winnr_out ) )
 			endif
 
 			let bufnr_out = ''
-			if verbose =~ 'bufnr' && is_selected
+			if s:verbose =~ 'bufnr' && is_selected
 				let bufnr_out .= 'b' . winbufnr( winnr )
-				let maxlen = maxlen - strlen( bufnr_out )
+				let maxlen = s:Set_maxlen( maxlen - strlen( bufnr_out ) )
 			endif
 
  
@@ -403,7 +472,7 @@ function! TabLineSet_main()
 			"
 			let winnr_start = 1
 			let winnr_stop = numwins
-			if verbose !~ 'buffers_list'
+			if s:verbose !~ 'buffers_list'
 				let winnr_start = winnr
 				let winnr_stop = winnr
 			endif
@@ -425,7 +494,8 @@ function! TabLineSet_main()
 					let tabbufname = '[No Name]'
 				endif
 
-				if verbose =~ '\(tabnr\|winnr\|bufnr\)' 
+
+				if s:verbose =~ '\(tabnr\|winnr\|bufnr\)' 
 							\ && tabbufnr == winbufnr( winnr() )
 					let tabbufname = '>' . tabbufname
 				endif
@@ -499,10 +569,10 @@ function! TabLineSet_main()
 			"
 			"
 			let tabexit = ''
-			if verbose =~ 'closers'
+			if s:verbose =~ 'closers'
 				let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
 							\ . '%' . tabnum . 'X!%X'
-				let maxlen = maxlen - 1
+				let maxlen = s:Set_maxlen( maxlen - 1 )
 				let g:TabLineSet_out_pos = g:TabLineSet_out_pos + 1
 				let tablabel .= ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 			endif
@@ -530,7 +600,7 @@ function! TabLineSet_main()
 			let tabline_out .= tablabel
 
 
-		endfor
+		endfor		" for tabnum in range( 1, tabpagenr('$') )
 
 
 		" ------------------------------
@@ -542,13 +612,13 @@ function! TabLineSet_main()
 
 		" right-align the label to close the current tab page
 		let last_close = ''
-		if tabpagenr('$') > 1 && verbose == ''
+		if tabpagenr('$') > 1 && s:verbose == ''
 			let last_close = '%=%#TabLine#%999X X'
 		endif
 
 		let avail = ( &columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
 
-		if g:TabLineSetFillerFunc != '' && verbose =~ 'filler_func'
+		if g:TabLineSetFillerFunc != '' && s:verbose =~ 'filler_func'
 			let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . avail . ')}'
 		endif
 
@@ -574,9 +644,19 @@ function! TabLineSet_main()
 
 	let g:TabLineSet_output_post = tabline_out
 
+"	let s:test_count += 1
+"	if s:last_out == tabline_out
+"		echo s:test_count . ', is same'
+"	else
+"		echo s:test_count . ', is not same'
+"	endif
+"	let s:last_out = tabline_out
+
 	return tabline_out
+
 endfunction
 
+let s:last_out = ''
 
 " End main function  }}}
 
@@ -588,6 +668,16 @@ endfunction
 " -------------------------------------------------------------------------
 "
 " 
+
+
+function! s:Set_maxlen( maxlen )
+	if a:maxlen < g:TabLineSet_verbose_auto 
+		let s:verbose = '' 
+	endif
+	let ret = max( [ 2, a:maxlen ] )
+	return ret
+endfunction
+
 
 
 function! TabLineSetFillerNull( avail )
@@ -614,6 +704,14 @@ let s:TabLineSet_verbose_save = ''
 
 
 function! TabLineSet_verbose_toggle()
+	call TabLineSet_hl_init()
+	call TabLineSet_verbose_toggle0()
+	call s:Force_tabline_update()
+endfunction
+
+" Have it split up to use this internally, when a "1 new" will fail in the
+" sandbox.
+function! TabLineSet_verbose_toggle0()
 	if s:TabLineSet_verbose_save == ''
 		let s:TabLineSet_verbose_save = g:TabLineSet_verbose
 		let g:TabLineSet_verbose = ''
@@ -621,6 +719,10 @@ function! TabLineSet_verbose_toggle()
 		let g:TabLineSet_verbose = s:TabLineSet_verbose_save
 		let s:TabLineSet_verbose_save = ''
 	endif
+
+endfunction
+
+function! s:Force_tabline_update()
 	" Make it update:
 	1new
 	quit
@@ -631,6 +733,7 @@ endfunction
 let s:all_verbose_sets_idx = 0
 
 function! TabLineSet_verbose_rotate()
+	call TabLineSet_hl_init()
 	let s:all_verbose_sets_idx = s:all_verbose_sets_idx + 1
 	if s:all_verbose_sets_idx > len( g:TabLineSet_verbose_sets ) - 1
 		let s:all_verbose_sets_idx = 0
@@ -723,6 +826,9 @@ function! TabLineSet_hl_init()
 
 
 endfunction
+
+
+call TabLineSet_hl_init()
 
 " End highlighting   }}}
 
