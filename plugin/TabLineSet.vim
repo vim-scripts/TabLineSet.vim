@@ -36,6 +36,8 @@
 " 						highlighting, if something clobbers it.
 " Version: 		1.61	Mon May 01, 05/01/2006 10:40:15 AM
 " 						- Really fix it this time.
+" Version: 		1.7		Thu May 04, 05/04/2006 1:04:14 AM
+" 						- Added pre- and post-proc function hooks
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -79,7 +81,9 @@
 "
 "	-	Additional customization can be done via the filter lists.  These are
 "		more complex, requiring use of regex's and such, but they allow you to
-"		make arbitrary changes to the TabLine string at runtime.
+"		make arbitrary changes to the TabLine string at runtime.  There is
+"		also preproc and postproc variables which can call back to your
+"		function(s).
 "
 "	-	You have the choice of editing stuff in place here, but it might be
 "		better to copy the vars and highlights of interest into your .vimrc .
@@ -257,6 +261,21 @@ let g:TabLineSet_output_post = ''
 let g:TabLineSetFillerFunc = ''
 
 
+" This is called for each evaluation pass and can set the initial
+" value of the tabline string.
+"
+let g:TabLineSet_preproc_func = ''
+"let g:TabLineSet_preproc_func = 'Tst_preproc'
+
+
+
+" This is passed the final tabline string.  It's a final hook for whatever.
+"
+let g:TabLineSet_postproc_func = ''
+"let g:TabLineSet_postproc_func = 'Tst_postproc_modified'
+
+
+
 "  End config vars  
 " 
 " ----------------------------------------------------------------------}}}
@@ -362,7 +381,9 @@ function! TabLineSet_main()
 		let maxlen = s:Set_maxlen( maxlen_start )
 
 		let tabline_out = ''
-
+		if g:TabLineSet_preproc_func != ''
+			let tabline_out = {g:TabLineSet_preproc_func}( )
+		endif
 
 
 		" g:TabLineSet_out_pos will hold the total number of chars, as they will
@@ -644,6 +665,10 @@ function! TabLineSet_main()
 
 	let g:TabLineSet_output_post = tabline_out
 
+	if g:TabLineSet_postproc_func != ''
+		call call( g:TabLineSet_postproc_func, [ tabline_out ] )
+	endif
+
 "	let s:test_count += 1
 "	if s:last_out == tabline_out
 "		echo s:test_count . ', is same'
@@ -660,6 +685,39 @@ let s:last_out = ''
 
 " End main function  }}}
 
+
+
+
+function! Tst_preproc( tabline )
+	return '[test]' . a:tabline
+endfunction
+
+
+let s:modified_table = {}
+function! Tst_postproc_modified( tabline )
+	let updated = []
+	for bufnr in range( 1, bufnr("$") )
+		if !bufexists( bufnr ) | continue | endif
+		let modded = getbufvar( bufnr, '&modified' )
+		if !has_key( s:modified_table, bufnr )
+			let s:modified_table[ bufnr ] = modded
+		endif
+		if s:modified_table[ bufnr ] != modded
+			let s:modified_table[ bufnr ] = modded
+			call add( updated, [ bufnr, modded ] )
+		endif
+	endfor
+
+	for elem in updated
+		let bufnr = elem[0]
+		let modded = elem[1]
+		echomsg 'bufnr#' . bufnr . ', ' . bufname( bufnr ) . ' is now ' . ( modded ? '' : 'no' ) . 'modified'
+	endfor
+
+	" call somefunction( updated )
+
+endfunction
+		
 
 
 
