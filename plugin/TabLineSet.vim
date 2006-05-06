@@ -38,6 +38,9 @@
 " 						- Really fix it this time.
 " Version: 		1.7		Thu May 04, 05/04/2006 1:04:14 AM
 " 						- Added pre- and post-proc function hooks
+" Version: 		1.7.1	Sat May 06, 05/06/2006 10:05:38 AM
+"						- Reset highlighting based on synIDattr() and whether
+"						some external operation has cleared all attributes.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -340,11 +343,12 @@ function! TabLineSet_main()
 	"
 	" Don't call the hl function each time, since it can cause the tabline
 	" function trigger for every keystroke:
-	if ( localtime() - s:last_localtime ) > 5
+	"if ( localtime() - s:last_localtime ) > 2
+	"if ! hlexists( 'TabPunct' )
+	if synIDattr(synIDtrans(hlID("TabPunct")), "fg") == ''
 		call TabLineSet_hl_init()
 	endif
-	let s:last_localtime = localtime()
-
+	"let s:last_localtime = localtime()
 
 
 	let s:verbose = g:TabLineSet_verbose
