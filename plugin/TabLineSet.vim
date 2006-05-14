@@ -1,3 +1,4 @@
+
 " vim6:fdm=marker:foldenable:ts=4:sw=4:foldclose=
 
 "           TabLineSet.vim  -- Vim7+ tabline configuration utility  {{{
@@ -41,12 +42,16 @@
 " Version: 		1.7.1	Sat May 06, 05/06/2006 10:05:38 AM
 "						- Reset highlighting based on synIDattr() and whether
 "						some external operation has cleared all attributes.
+" Version: 		1.8		Sun May 14, 05/14/2006 10:45:07 AM
+"						- Use the tabline wrapping patch if available.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
 " Synopsis:
 "
 "	-	Configurable, intelligent/dynamic tab field sizing.
+"
+"	-	See all buffers loaded in windows in all tabs.
 "
 "	-	New colorscheme and general presentation.  The highlighting groups are
 "		defined at the end of the script.  Tweak as desired.
@@ -69,6 +74,9 @@
 "							  contain the name of a function to be evaluated
 "							  at runtime.  It's proof of concept, mostly.
 "
+"	-	This is an option which works with the experimental tabline wrapping
+"		patch:
+"			g:TabLineSet_max_wrap = 3
 "
 "	-	You can add these mappings to your .vimrc to control the verbose
 "		settings on the fly:
@@ -114,6 +122,7 @@
  
 
 
+
 "                     Configuration variables section                   {{{
 " -------------------------------------------------------------------------
 "
@@ -125,7 +134,7 @@ else
 	finish
 endif
 
-let g:TabLineSet_version = 1.56
+let g:TabLineSet_version = 1.8
 
 if exists( 'g:no_load_TabLineSet' )		" Turn it off from .vimrc
 	finish
@@ -136,6 +145,7 @@ let g:TabLineSet_min = 4			" minimum tab width (space padded)
 let g:TabLineSet_min2 = 4			" ... used for 'buffers_list'
 let g:TabLineSet_max = 999			" maximum tab width
 let g:TabLineSet_verbose_auto = 4	" turn on/off verbose at this tab width
+let g:TabLineSet_max_wrap = 1		" maximum rows to wrap tabline into
 
 
 " Masterlist:  do not change.
@@ -150,8 +160,8 @@ let s:all_verbose_options =
 
 let g:TabLineSet_verbose_sets = 
 	\ [
-		\ [ 'modified', 'windows', 'buffers_list', 'closers', 'filler_func' ],
 		\ s:all_verbose_options,
+		\ [ 'modified', 'windows', 'buffers_list', 'closers', 'filler_func' ],
 		\ [ 'modified', 'windows', 'closers' ],
 		\ [ 'buffers_list' ],
 		\ [ ]
@@ -161,8 +171,8 @@ let g:TabLineSet_verbose_sets =
 		"  +-----------    Your option list(s) here:
 		"                  or
 		"  Here:
-
-
+		"  |
+		"  V
 call add( g:TabLineSet_verbose_sets, [ 'closers', 'buffers_list' ] )
 
 
@@ -189,7 +199,7 @@ let g:TabLineSet_verbose = join( g:TabLineSet_verbose_sets[0], ',' )
 " looping a lot.  If you add bunches of filters, it might affect performance.
 "
 let g:TabLineSet_bufname_filters = [ 
-		\ 	[ '\[No Name\]'		],
+		\ 	[ '\[No Name\]',		'[]'		],
 		\ 	[ '^--*\(.*\)--*$',		'\1',	'' ]
 		\ ]
 		" The first example filters out all unnamed buffers.
@@ -303,39 +313,39 @@ let s:last_tabpagenr = tabpagenr()
 let s:last_localtime = localtime()
 
 
-function! TabLineSet_main()
+function! TabLineSet_main( ... )
 
 	if !exists('s:called_hl_init')
 		let s:called_hl_init = 1
 		call TabLineSet_hl_init()
 	endif
 
-	if 0 && has( 'reltime' )
-		echomsg string( reltime() )
-		if s:bug_keycount >= 3
-			let s:bug_keycount = 0
-			let s:last_reltime = reltime()
-			call TabLineSet_verbose_toggle0()
-			"return 'Tagline bug detected'
-		endif
-
-		if ( reltime()[1] - s:last_reltime[1] ) < 5000000
-			if s:last_winnr == winnr() && s:last_tabpagenr == tabpagenr()
-				let s:bug_keycount += 1
-			endif
-		else
-			let s:bug_keycount = 0
-		endif
-		let s:last_reltime = reltime()
-		let s:last_winnr = winnr() 
-		let s:last_tabpagenr = tabpagenr()
-
-		if g:TabLineSet_debug_counter >= 0
-			echomsg "TabLineSet_main called " . g:TabLineSet_debug_counter . " times."
-			let g:TabLineSet_debug_counter += 1
-		endif
-		echomsg 'bugkey ' . s:bug_keycount
-	endif
+"	if has( 'reltime' )
+"		echomsg string( reltime() )
+"		if s:bug_keycount >= 3
+"			let s:bug_keycount = 0
+"			let s:last_reltime = reltime()
+"			call TabLineSet_verbose_toggle0()
+"			"return 'Tagline bug detected'
+"		endif
+"
+"		if ( reltime()[1] - s:last_reltime[1] ) < 5000000
+"			if s:last_winnr == winnr() && s:last_tabpagenr == tabpagenr()
+"				let s:bug_keycount += 1
+"			endif
+"		else
+"			let s:bug_keycount = 0
+"		endif
+"		let s:last_reltime = reltime()
+"		let s:last_winnr = winnr() 
+"		let s:last_tabpagenr = tabpagenr()
+"
+"		if g:TabLineSet_debug_counter >= 0
+"			echomsg "TabLineSet_main called " . g:TabLineSet_debug_counter . " times."
+"			let g:TabLineSet_debug_counter += 1
+"		endif
+"		echomsg 'bugkey ' . s:bug_keycount
+"	endif
 
 	" Call the highlight init each time, since there is no simple way of
 	" telling whether something else has trashed our highlighting, which
@@ -355,22 +365,25 @@ function! TabLineSet_main()
 
 	"let avail = winwidth( winnr() )
 	" It always goes across whole top of screen:
-	let avail = &columns
+	let usable_columns = &columns * g:TabLineSet_max_wrap
+
+	let avail = usable_columns
 
 	let numtabs = tabpagenr('$')
 
 	" account for space padding between tabs, and the "close" button
-	let maxlen = ( &columns - ( numtabs * 3 ) 
+	let maxlen = ( usable_columns - ( numtabs * 3 ) 
 				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
 
 	if maxlen > g:TabLineSet_max | let maxlen =  g:TabLineSet_max | endif
 
 	if maxlen < g:TabLineSet_verbose_auto 
 	   	let s:verbose = '' 
-		let maxlen = ( &columns - ( numtabs * 3 ) 
+		let maxlen = ( usable_columns - ( numtabs * 3 ) 
 				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
    	endif
 
+	"echomsg 'max:' . maxlen . ',col:' . usable_columns
 
 	let maxlen_start = maxlen
 	let tabline_out = ''	" Don't fall out of below loop with this undefined
@@ -379,7 +392,7 @@ function! TabLineSet_main()
 	" Loop to extend maxlen, the dynamic length limit assigned to the tabs
 	let maxloop = 10
 	while ( maxloop > 0 ) && ( avail > 1 ) 
-				\ && ( maxlen_start < &columns )
+				\ && ( maxlen_start < usable_columns )
 		let maxloop = maxloop - 1
 
 		let maxlen = s:Set_maxlen( maxlen_start )
@@ -394,6 +407,8 @@ function! TabLineSet_main()
 		" appear in the tab line.  The actual number of chars is badly
 		" highlight formatting information.
 		let g:TabLineSet_out_pos = 0
+		let Tabline_row = 0
+		let Tabline_col = 0
 
 
 		for tabnum in range( 1, tabpagenr('$') )
@@ -403,6 +418,8 @@ function! TabLineSet_main()
 			if len( buflist ) < 1
 				continue
 			endif
+
+			let tablabel_len = 0
 
 
 			let modded = ''
@@ -415,12 +432,6 @@ function! TabLineSet_main()
 			let is_selected = tabnum == tabpagenr()
 
 			let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
-
-			" set the tab page number (for mouse clicks)
-			let tabline_out .= '%' . ( tabnum ) . 'T'
-
-
-
 
 
 			" ----------------------------------------
@@ -479,7 +490,7 @@ function! TabLineSet_main()
 						\ . join( out_list , ',' )
 						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 						\ . l_brac
-				let g:TabLineSet_out_pos = g:TabLineSet_out_pos + 
+				let tablabel_len +=
 						\ strlen( r_brac . join( out_list , ',' ) . l_brac )
 
 			endif
@@ -569,7 +580,7 @@ function! TabLineSet_main()
 			endwhile
 
 			"let tabbufnames = strpart( tabbufnames, 0,  maxlen )
-			let g:TabLineSet_out_pos = g:TabLineSet_out_pos + strlen( tabbufnames )
+			let tablabel_len += strlen( tabbufnames )
 
 			let sep = ''
 					\ . ( is_selected ? '%#TabPunctSel#' : '%#TabPunct#' )
@@ -598,7 +609,7 @@ function! TabLineSet_main()
 				let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
 							\ . '%' . tabnum . 'X!%X'
 				let maxlen = s:Set_maxlen( maxlen - 1 )
-				let g:TabLineSet_out_pos = g:TabLineSet_out_pos + 1
+				let tablabel_len  += 1
 				let tablabel .= ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 			endif
 
@@ -607,13 +618,15 @@ function! TabLineSet_main()
 			"  Put the pieces together
 			"
 
+			" set the tab page number (for mouse clicks)
 
-			let tablabel = tabexit . tablabel . ' ' . tabbufnames
+			let tablabel = '%' . ( tabnum ) . 'T'
+						\ . tabexit . tablabel . ' ' . tabbufnames
 
 			let tablabel .= '%#TabSep#' . '|'
 						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-
-			let g:TabLineSet_out_pos = g:TabLineSet_out_pos + 3
+			let tablabel .= '%T'
+			let tablabel_len += 3
 
 
 			for elem in g:TabLineSet_tab_filters
@@ -624,6 +637,23 @@ function! TabLineSet_main()
 
 			let tabline_out .= tablabel
 
+			if g:TabLineSet_max_wrap > 1
+"				echomsg 'here, out_pos='.  g:TabLineSet_out_pos 
+"						\ . ', label len=' . tablabel_len
+"						\ . ', Tabline_col=' . Tabline_col
+"						\ . ', new row=' . ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
+				if ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
+				\ > Tabline_row 
+					let Tabline_row += 1
+					let g:TabLineSet_out_pos += &columns - Tabline_col
+					"echomsg 'adding' . ( &columns - Tabline_col )
+					let Tabline_col = 0
+				endif
+			endif
+
+			let Tabline_col += tablabel_len
+
+			let g:TabLineSet_out_pos += tablabel_len
 
 		endfor		" for tabnum in range( 1, tabpagenr('$') )
 
@@ -632,16 +662,16 @@ function! TabLineSet_main()
 		"  Final formatting
 		"
 		" after the last tab fill with TabLineFill and reset tab page nr
-		let tabline_out .= '%#TabLineFillEnd#%T'
+		let tabline_out .= '%#TabLineFillEnd#'
 
 
-		" right-align the label to close the current tab page
+		"let last_close = repeat(' ', &columns - Tabline_col )
 		let last_close = ''
 		if tabpagenr('$') > 1 && s:verbose == ''
-			let last_close = '%=%#TabLine#%999X X'
+			let last_close .= '%=%#TabLine#%999X!X%X%##'
 		endif
 
-		let avail = ( &columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
+		let avail = ( usable_columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
 
 		if g:TabLineSetFillerFunc != '' && s:verbose =~ 'filler_func'
 			let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . avail . ')}'
