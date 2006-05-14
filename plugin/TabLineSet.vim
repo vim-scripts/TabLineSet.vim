@@ -46,6 +46,8 @@
 "						- Use the tabline wrapping patch if available.
 " Version: 		1.8.1	Sun May 14, 05/14/2006 4:56:45 PM
 "						- Corrected indexing for mousefunc patch.
+" Version: 		1.8.2	Sun May 14, 05/14/2006 4:56:45 PM
+"						- Added wrap up/down arrows for 'mousefunc' patch.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -678,6 +680,13 @@ function! TabLineSet_main( ... )
 			let last_close .= '%=%#TabLine#%999X!X%X%##'
 		endif
 
+		if exists('&mousefunc')
+			if g:TabLineSet_max_wrap > 1
+				let last_close .= ' <-'
+			endif
+			let last_close .= ' ' . g:TabLineSet_max_wrap . ' -> '
+		endif
+
 		let avail = ( usable_columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
 
 		if g:TabLineSetFillerFunc != '' && s:verbose =~ 'filler_func'
@@ -930,6 +939,7 @@ endfunction
 call TabLineSet_hl_init()
 
 " End highlighting   }}}
+
 
 
 
