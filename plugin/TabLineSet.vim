@@ -44,6 +44,8 @@
 "						some external operation has cleared all attributes.
 " Version: 		1.8		Sun May 14, 05/14/2006 10:45:07 AM
 "						- Use the tabline wrapping patch if available.
+" Version: 		1.8.1	Sun May 14, 05/14/2006 4:56:45 PM
+"						- Corrected indexing for mousefunc patch.
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -134,7 +136,7 @@ else
 	finish
 endif
 
-let g:TabLineSet_version = 1.8
+let g:TabLineSet_version = 1.8.1
 
 if exists( 'g:no_load_TabLineSet' )		" Turn it off from .vimrc
 	finish
@@ -407,8 +409,9 @@ function! TabLineSet_main( ... )
 		" appear in the tab line.  The actual number of chars is badly
 		" highlight formatting information.
 		let g:TabLineSet_out_pos = 0
-		let Tabline_row = 0
-		let Tabline_col = 0
+		let g:TabLineSet_row = 0
+		let g:TabLineSet_col = 0
+		let g:TabLineSet_idxs = ''
 
 
 		for tabnum in range( 1, tabpagenr('$') )
@@ -626,7 +629,7 @@ function! TabLineSet_main( ... )
 			let tablabel .= '%#TabSep#' . '|'
 						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 			let tablabel .= '%T'
-			let tablabel_len += 3
+			let tablabel_len += 2
 
 
 			for elem in g:TabLineSet_tab_filters
@@ -637,23 +640,27 @@ function! TabLineSet_main( ... )
 
 			let tabline_out .= tablabel
 
+
 			if g:TabLineSet_max_wrap > 1
 "				echomsg 'here, out_pos='.  g:TabLineSet_out_pos 
 "						\ . ', label len=' . tablabel_len
-"						\ . ', Tabline_col=' . Tabline_col
+"						\ . ', g:TabLineSet_col=' . g:TabLineSet_col
 "						\ . ', new row=' . ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
 				if ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
-				\ > Tabline_row 
-					let Tabline_row += 1
-					let g:TabLineSet_out_pos += &columns - Tabline_col
-					"echomsg 'adding' . ( &columns - Tabline_col )
-					let Tabline_col = 0
+				\ > g:TabLineSet_row 
+					let g:TabLineSet_row += 1
+					let g:TabLineSet_out_pos += &columns - g:TabLineSet_col
+					"echomsg 'adding' . ( &columns - g:TabLineSet_col )
+					let g:TabLineSet_idxs .= 
+								\ repeat( ' ', &columns - g:TabLineSet_col )
+					let g:TabLineSet_col = 0
 				endif
 			endif
 
-			let Tabline_col += tablabel_len
+			let g:TabLineSet_col += tablabel_len
 
 			let g:TabLineSet_out_pos += tablabel_len
+			let g:TabLineSet_idxs .= repeat( tabnum, tablabel_len )
 
 		endfor		" for tabnum in range( 1, tabpagenr('$') )
 
@@ -665,7 +672,7 @@ function! TabLineSet_main( ... )
 		let tabline_out .= '%#TabLineFillEnd#'
 
 
-		"let last_close = repeat(' ', &columns - Tabline_col )
+		"let last_close = repeat(' ', &columns - g:TabLineSet_col )
 		let last_close = ''
 		if tabpagenr('$') > 1 && s:verbose == ''
 			let last_close .= '%=%#TabLine#%999X!X%X%##'
