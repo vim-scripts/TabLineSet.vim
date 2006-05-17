@@ -48,6 +48,9 @@
 "						- Corrected indexing for mousefunc patch.
 " Version: 		1.8.2	Sun May 14, 05/14/2006 4:56:45 PM
 "						- Added wrap up/down arrows for 'mousefunc' patch.
+" Version: 		1.8.3	Wed May 17, 05/17/2006 10:11:48 AM
+" 						- Checks for need to recalc, now ~instant return 
+" 						for page redraws
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -87,12 +90,12 @@
 "
 "		The first one toggles all indicators off:
 "
-"			nmap <Leader>tv :call TabLineSet_verbose_toggle()<CR>
+"			nmap <silent> <Leader>tv :call TabLineSet_verbose_toggle()<CR>
 "
 "		The second rotates through a list of option settings which
 "		configurable/extensible via g:TabLineSet_verbose_sets.  See below.
 "
-"			nmap <Leader>tr :call TabLineSet_verbose_rotate()<CR>
+"			nmap <silent> <Leader>tr :call TabLineSet_verbose_rotate()<CR>
 "
 "	-	Additional customization can be done via the filter lists.  These are
 "		more complex, requiring use of regex's and such, but they allow you to
@@ -109,17 +112,6 @@
 "
 "
 " Issues:
-"
-"	-	There is a  problem where slow-down occurs when the tabline function
-"		is called for every keystroke.  Use the toggle or rotate
-"		mappings/functions to reset the highlighting, if something clobbers
-"		it.
-"
-" Bugs:
-"
-" 	-	There is some problem with using the 'filler function' as of Vim70d
-" 		performance drags down because a re-eval is called for every
-" 		keystroke.
 "
 " }}}
 
@@ -138,10 +130,15 @@ else
 	finish
 endif
 
-let g:TabLineSet_version = 1.8.1
+let g:TabLineSet_version = 1.8.3
 
 if exists( 'g:no_load_TabLineSet' )		" Turn it off from .vimrc
 	finish
+endif
+
+" Readonly, but could be useful:
+if !exists('g:TabLineSet_tab_status')
+	let g:TabLineSet_tab_status = {}
 endif
 
 
@@ -309,8 +306,6 @@ let g:TabLineSet_postproc_func = ''
 let g:TabLineSet_debug_counter = -1
 
 let s:last_reltime = reltime()
-" Try to deal with the Vim7 bug where the tagline function starts getting
-" called for every key
 let s:bug_keycount = 0
 let s:last_winnr = winnr() 
 let s:last_tabpagenr = tabpagenr()
@@ -324,51 +319,30 @@ function! TabLineSet_main( ... )
 		call TabLineSet_hl_init()
 	endif
 
-"	if has( 'reltime' )
-"		echomsg string( reltime() )
-"		if s:bug_keycount >= 3
-"			let s:bug_keycount = 0
-"			let s:last_reltime = reltime()
-"			call TabLineSet_verbose_toggle0()
-"			"return 'Tagline bug detected'
-"		endif
-"
-"		if ( reltime()[1] - s:last_reltime[1] ) < 5000000
-"			if s:last_winnr == winnr() && s:last_tabpagenr == tabpagenr()
-"				let s:bug_keycount += 1
-"			endif
-"		else
-"			let s:bug_keycount = 0
-"		endif
-"		let s:last_reltime = reltime()
-"		let s:last_winnr = winnr() 
-"		let s:last_tabpagenr = tabpagenr()
-"
-"		if g:TabLineSet_debug_counter >= 0
-"			echomsg "TabLineSet_main called " . g:TabLineSet_debug_counter . " times."
-"			let g:TabLineSet_debug_counter += 1
-"		endif
-"		echomsg 'bugkey ' . s:bug_keycount
-"	endif
-
-	" Call the highlight init each time, since there is no simple way of
-	" telling whether something else has trashed our highlighting, which
-	" happens all too often:
-	"
-	" Don't call the hl function each time, since it can cause the tabline
-	" function trigger for every keystroke:
-	"if ( localtime() - s:last_localtime ) > 2
-	"if ! hlexists( 'TabPunct' )
 	if synIDattr(synIDtrans(hlID("TabPunct")), "fg") == ''
 		call TabLineSet_hl_init()
 	endif
-	"let s:last_localtime = localtime()
 
+	let t = {}
+	for tabnr in range( 1, tabpagenr('$') )
+		for bufnr in  tabpagebuflist( tabnr )
+			let t[ bufnr ] = {}
+			let t[bufnr].tabnr = tabnr
+			let t[bufnr].winnr = tabpagewinnr( bufwinnr( bufnr ) )
+			let t[bufnr].modified = getbufvar( bufnr, '&modified' )
+		endfor
+	endfor
+	let t.wrap = g:TabLineSet_max_wrap
+	let t.verbose = g:TabLineSet_verbose
+
+	if t == g:TabLineSet_tab_status
+	\ && g:TabLineSet_output_post != ''
+		return g:TabLineSet_output_post
+	endif
+	let g:TabLineSet_tab_status = deepcopy(t)
 
 	let s:verbose = g:TabLineSet_verbose
 
-	"let avail = winwidth( winnr() )
-	" It always goes across whole top of screen:
 	let usable_columns = &columns * g:TabLineSet_max_wrap
 
 	let avail = usable_columns
@@ -416,10 +390,10 @@ function! TabLineSet_main( ... )
 		let g:TabLineSet_idxs = ''
 
 
-		for tabnum in range( 1, tabpagenr('$') )
+		for tabnr in range( 1, tabpagenr('$') )
 
 			let buflist = []
-			let buflist = tabpagebuflist( tabnum )
+			let buflist = tabpagebuflist( tabnr )
 			if len( buflist ) < 1
 				continue
 			endif
@@ -434,7 +408,7 @@ function! TabLineSet_main( ... )
 				endif
 			endfor
 
-			let is_selected = tabnum == tabpagenr()
+			let is_selected = tabnr == tabpagenr()
 
 			let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
 
@@ -449,8 +423,8 @@ function! TabLineSet_main( ... )
 				let maxlen = s:Set_maxlen( maxlen - 1 )
 			endif
 
-			let winnr = tabpagewinnr( tabnum )
-			let numwins = tabpagewinnr( tabnum, ("$") )
+			let winnr = tabpagewinnr( tabnr )
+			let numwins = tabpagewinnr( tabnr, ("$") )
 
 
 
@@ -467,7 +441,7 @@ function! TabLineSet_main( ... )
 
 			let tabnr_out = ''
 			if s:verbose =~ 'tabnr' && is_selected
-				let tabnr_out .= 't' . tabnum 
+				let tabnr_out .= 't' . tabnr 
 				let maxlen = s:Set_maxlen( maxlen - strlen( tabnr_out ) )
 			endif
 
@@ -612,8 +586,8 @@ function! TabLineSet_main( ... )
 			let tabexit = ''
 			if s:verbose =~ 'closers'
 				let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
-							\ . '%' . tabnum . 'X!%X'
-				let maxlen = s:Set_maxlen( maxlen - 1 )
+							\ . '%' . tabnr . 'X!%X'
+				"let maxlen = s:Set_maxlen( maxlen - 1 )
 				let tablabel_len  += 1
 				let tablabel .= ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 			endif
@@ -625,7 +599,7 @@ function! TabLineSet_main( ... )
 
 			" set the tab page number (for mouse clicks)
 
-			let tablabel = '%' . ( tabnum ) . 'T'
+			let tablabel = '%' . ( tabnr ) . 'T'
 						\ . tabexit . tablabel . ' ' . tabbufnames
 
 			let tablabel .= '%#TabSep#' . '|'
@@ -662,9 +636,9 @@ function! TabLineSet_main( ... )
 			let g:TabLineSet_col += tablabel_len
 
 			let g:TabLineSet_out_pos += tablabel_len
-			let g:TabLineSet_idxs .= repeat( tabnum, tablabel_len )
+			let g:TabLineSet_idxs .= repeat( tabnr, tablabel_len )
 
-		endfor		" for tabnum in range( 1, tabpagenr('$') )
+		endfor		" for tabnr in range( 1, tabpagenr('$') )
 
 
 		" ------------------------------
@@ -679,12 +653,16 @@ function! TabLineSet_main( ... )
 		if tabpagenr('$') > 1 && s:verbose == ''
 			let last_close .= '%=%#TabLine#%999X!X%X%##'
 		endif
+		let g:TabLineSet_out_pos += 2
 
-		if exists('&mousefunc')
+		if exists('&mousefunc') 			" tabline called from in mousefunc? && &mousefunc != ''
 			if g:TabLineSet_max_wrap > 1
 				let last_close .= ' <-'
+				let g:TabLineSet_out_pos += 2
 			endif
-			let last_close .= ' ' . g:TabLineSet_max_wrap . ' -> '
+			let s = ' ' . g:TabLineSet_max_wrap . ' -> '
+			let g:TabLineSet_out_pos += strlen( s )
+			let last_close .= s
 		endif
 
 		let avail = ( usable_columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
@@ -694,8 +672,6 @@ function! TabLineSet_main( ... )
 		endif
 
 		let tabline_out .= last_close
-
-
 
 
 		" too slow:
