@@ -57,6 +57,8 @@
 " 						- Some speed tweaks
 " 						- Added g:TabLineSet_max_cols to enable GUI tab
 " 						scrolling
+" Version: 		2.0.1	Thu May 18, 05/18/2006 7:48:25 PM
+" 						- startup bug with Tab.._min undefined
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -980,9 +982,9 @@ function! s:Fill_bufnames()
 				let bufname = '[No Name]'
 			endif
 
-			while strlen( bufname ) < g:TabLineSet_min 
-				let bufname .= ' '
-			endwhile
+"			while strlen( bufname ) < g:TabLineSet_min 
+"				let bufname .= ' '
+"			endwhile
 
 			" Custom regex:
 			"
