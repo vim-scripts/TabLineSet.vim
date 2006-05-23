@@ -51,6 +51,12 @@
 " Version: 		1.8.3	Wed May 17, 05/17/2006 10:11:48 AM
 " 						- Checks for need to recalc, now ~instant return 
 " 						for page redraws
+" Version: 		2.0		Thu May 18, 05/18/2006 7:48:25 PM
+" 						- Heavily restructured for support for gui tabs;
+" 						probably installed some bugs too :-P
+" 						- Some speed tweaks
+" 						- Added g:TabLineSet_max_cols to enable GUI tab
+" 						scrolling
 "
 " Acknowledgements:	Well, I started with the doc page example, I guess :-)
 "
@@ -81,9 +87,15 @@
 "							  contain the name of a function to be evaluated
 "							  at runtime.  It's proof of concept, mostly.
 "
+"			All the user settable global variables are listed at the top of
+"			the script after this.
+"
 "	-	This is an option which works with the experimental tabline wrapping
 "		patch:
 "			g:TabLineSet_max_wrap = 3
+"		Change this to let tabs grow into GUI tab scrolling buttons:
+" 			g:TabLineSet_max_cols
+"		and also to tweak for difference in GUI font size.
 "
 "	-	You can add these mappings to your .vimrc to control the verbose
 "		settings on the fly:
@@ -130,11 +142,28 @@ else
 	finish
 endif
 
-let g:TabLineSet_version = 1.8.3
+let g:TabLineSet_version = 2.0
 
 if exists( 'g:no_load_TabLineSet' )		" Turn it off from .vimrc
 	finish
 endif
+
+
+let g:TabLineSet_min_tab_len = 6		" minimum tab width (space padded)
+
+let g:TabLineSet_max_tab_len = 999
+										" try some smaller number, i.e. 30
+										" when using 'full_path' option
+
+let g:TabLineSet_max_cols = &columns	
+										" you might want to set it higher than
+										" &columns for GUI with scroll buttons
+
+let g:TabLineSet_verbose_auto = 4		" turn on/off verbose at this tab width
+
+let g:TabLineSet_max_wrap = 1			" maximum rows to wrap tabline into
+										" Value can be 1+
+
 
 " Readonly, but could be useful:
 if !exists('g:TabLineSet_tab_status')
@@ -142,17 +171,11 @@ if !exists('g:TabLineSet_tab_status')
 endif
 
 
-let g:TabLineSet_min = 4			" minimum tab width (space padded)
-let g:TabLineSet_min2 = 4			" ... used for 'buffers_list'
-let g:TabLineSet_max = 999			" maximum tab width
-let g:TabLineSet_verbose_auto = 4	" turn on/off verbose at this tab width
-let g:TabLineSet_max_wrap = 1		" maximum rows to wrap tabline into
-
 
 " Masterlist:  do not change.
 let s:all_verbose_options = 
 	\ [ 
-	\	'modified', 'windows', 'buffers_list', 'closers', 
+	\	'modified', 'windows', 'full_path', 'buffers_list', 'closers', 
 	\	'tabnr', 'winnr', 'bufnr', 'filler_func'
 	\ ]
 
@@ -161,9 +184,13 @@ let s:all_verbose_options =
 
 let g:TabLineSet_verbose_sets = 
 	\ [
-		\ s:all_verbose_options,
+		\ [ 
+		\	'modified', 'windows', 'buffers_list', 'closers', 
+		\	'tabnr', 'winnr', 'bufnr', 'filler_func'
+		\ ],
 		\ [ 'modified', 'windows', 'buffers_list', 'closers', 'filler_func' ],
 		\ [ 'modified', 'windows', 'closers' ],
+		\ [ 'modified', 'windows', 'closers', 'full_path' ],
 		\ [ 'buffers_list' ],
 		\ [ ]
 	\ ]
@@ -220,6 +247,10 @@ let g:TabLineSet_tab_filters = [
 		"\ 	[ '%#TabPunct\w*#,%#Tab\w*#',		 ';',	'g' ]
 		" This example removes the commans and their highlighting, and
 		" replaces them with semi-colons.
+
+if &guioptions =~ 'e'
+	call add( g:TabLineSet_tab_filters, [ '[,;]',		 ' & ',	'g' ] )
+endif
 
 
 if 0	"  don't execute, example only
@@ -303,16 +334,18 @@ let g:TabLineSet_postproc_func = ''
 "
 " 
 
-let g:TabLineSet_debug_counter = -1
 
-let s:last_reltime = reltime()
-let s:bug_keycount = 0
-let s:last_winnr = winnr() 
-let s:last_tabpagenr = tabpagenr()
-let s:last_localtime = localtime()
 
+" These are all static script vars so that it will handle the way guitablabel
+" re-enters for each tab:
+"
+let s:tabline_out = ''
+let s:tabline_pieces = {}
+let g:TabLineSet_tablabels = {}
 
 function! TabLineSet_main( ... )
+
+	let s:is_gui = &guioptions =~ 'e'
 
 	if !exists('s:called_hl_init')
 		let s:called_hl_init = 1
@@ -323,339 +356,504 @@ function! TabLineSet_main( ... )
 		call TabLineSet_hl_init()
 	endif
 
+
+	if s:is_gui && v:lnum > 1
+		return g:TabLineSet_tablabels[ v:lnum ]
+	endif
+
+	" ------------------------------------------------------------
+	" Don't recalc unless something has changed:
+	"
+	let s:check_bufnrs = []
 	let t = {}
 	for tabnr in range( 1, tabpagenr('$') )
 		for bufnr in  tabpagebuflist( tabnr )
-			let t[ bufnr ] = {}
+			if index( s:check_bufnrs, bufnr ) < 0
+				call add( s:check_bufnrs, bufnr )
+			endif
+			let t[bufnr] = {}
 			let t[bufnr].tabnr = tabnr
-			let t[bufnr].winnr = tabpagewinnr( bufwinnr( bufnr ) )
+
+			if s:is_gui
+				" winnr isn't stabile with GUI tabs
+				"let t[bufnr].winnr = tabpagewinnr( bufwinnr( bufnr ) )
+			else
+				let t[bufnr].winnr = tabpagewinnr( bufwinnr( bufnr ) )
+			endif
+
+            " Seems to need bufname as well as bufnr in some cases:
+            "
+			let t[bufnr].bufname = bufname( bufnr )
 			let t[bufnr].modified = getbufvar( bufnr, '&modified' )
+
+			if s:is_gui
+				let t[bufnr].curr_window = s:bufenter_winnr
+			else
+				let t[bufnr].curr_window = 
+                        \( tabpagenr() && winnr() == tabpagewinnr( tabnr ) )
+			endif
 		endfor
 	endfor
+	if s:is_gui
+		let t.curr_tabnr = s:bufenter_tabnr
+	else
+		let t.curr_tabnr = tabpagenr()
+	endif
+	let t.is_gui = s:is_gui
 	let t.wrap = g:TabLineSet_max_wrap
+	let t.max_cols = g:TabLineSet_max_cols
+	let t.max_tab_len = g:TabLineSet_max_tab_len
 	let t.verbose = g:TabLineSet_verbose
+	let t.columns = &columns
+
+"	for key in keys(t)
+"		if t[key] != g:TabLineSet_tab_status[key]
+"			echomsg 'diff ' . key . ' = ' . string( t[key] ) . ' != ' . string( g:TabLineSet_tab_status[key] )
+"		endif
+"	endfor
 
 	if t == g:TabLineSet_tab_status
 	\ && g:TabLineSet_output_post != ''
-		return g:TabLineSet_output_post
+		if s:is_gui 
+			"echomsg 'return '.g:TabLineSet_tablabels[ v:lnum ]
+			return g:TabLineSet_tablabels[ v:lnum ]
+		else
+			return g:TabLineSet_output_post
+		endif
 	endif
 	let g:TabLineSet_tab_status = deepcopy(t)
 
+	"
+	" End recalc calc
+	" ------------------------------------------------------------
+
+	return s:Fill_tab_labels()
+
+endfunction
+
+
+
+
+
+function! s:Fill_tab_labels()
+
 	let s:verbose = g:TabLineSet_verbose
+	let s:min_tab_len = g:TabLineSet_min_tab_len
+	let g:TabLineSet_tablabels = {}
 
-	let usable_columns = &columns * g:TabLineSet_max_wrap
-
-	let avail = usable_columns
-
-	let numtabs = tabpagenr('$')
-
-	" account for space padding between tabs, and the "close" button
-	let maxlen = ( usable_columns - ( numtabs * 3 ) 
-				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
-
-	if maxlen > g:TabLineSet_max | let maxlen =  g:TabLineSet_max | endif
-
-	if maxlen < g:TabLineSet_verbose_auto 
-	   	let s:verbose = '' 
-		let maxlen = ( usable_columns - ( numtabs * 3 ) 
-				\ - ( s:verbose == '' ? 2 : 0 ) ) / numtabs
-   	endif
-
-	"echomsg 'max:' . maxlen . ',col:' . usable_columns
-
-	let maxlen_start = maxlen
-	let tabline_out = ''	" Don't fall out of below loop with this undefined
-
-
-	" Loop to extend maxlen, the dynamic length limit assigned to the tabs
-	let maxloop = 10
-	while ( maxloop > 0 ) && ( avail > 1 ) 
-				\ && ( maxlen_start < usable_columns )
-		let maxloop = maxloop - 1
-
-		let maxlen = s:Set_maxlen( maxlen_start )
-
-		let tabline_out = ''
-		if g:TabLineSet_preproc_func != ''
-			let tabline_out = {g:TabLineSet_preproc_func}( )
+	" Must check bufnames instead of numbers, since when opening a file name
+	" from a no-name buffer, the bufnr doesn't seem to change.
+	"
+	for bufnr in s:check_bufnrs
+		if has_key( s:bufnames, bufnr ) && bufname( bufnr ) == s:bufnames[bufnr]
+		else
+			call s:Fill_bufnames()
+			break
 		endif
+	endfor
+
+	let usable_columns = max( [ &columns , g:TabLineSet_max_cols ] )
+	let usable_columns = usable_columns * g:TabLineSet_max_wrap
 
 
-		" g:TabLineSet_out_pos will hold the total number of chars, as they will
-		" appear in the tab line.  The actual number of chars is badly
-		" highlight formatting information.
+	let s:avail = usable_columns
+
+	let s:tabline_out = ''
+	let s:overflow = 1
+
+
+	let loop = 0
+	while ( loop < 10 ) && ( s:avail > 1 ) && ( s:overflow > 0 )
+		"echomsg 'loop: ' . loop . ', overflow: ' . s:overflow
+
+		let loop += 1
+
+		" g:TabLineSet_out_pos will hold the total number of chars, as they
+		" will appear in the tab line (without formatting strings).
+		"
 		let g:TabLineSet_out_pos = 0
 		let g:TabLineSet_row = 0
 		let g:TabLineSet_col = 0
 		let g:TabLineSet_idxs = ''
 
 
-		for tabnr in range( 1, tabpagenr('$') )
+		let tabs_overflow = 0
 
-			let buflist = []
-			let buflist = tabpagebuflist( tabnr )
-			if len( buflist ) < 1
-				continue
+		"		if s:verbose =~ 'buffers_list'
+		"			"let s:min_tab_len = g:TabLineSet_min_tab_len * 2
+		"			let s:min_tab_len = 15
+		"		endif
+
+		" ------------------------------------------------------------
+		"
+		"  Pre-processing custom regex:
+		"
+		let tabline_out = ''
+		if g:TabLineSet_preproc_func != ''
+			let tabline_out = {g:TabLineSet_preproc_func}( )
+		endif
+
+
+
+		let tabnrs = range( 1, tabpagenr('$') )
+
+		" ------------------------------------------------------------
+		"
+		" Info gathering tab page loop
+		" 
+		for tabnr in tabnrs
+
+			let s:tabline_pieces[tabnr] = {}
+
+			if s:is_gui
+				let is_selected = ( tabnr == s:bufenter_tabnr ) 
+			else
+				let is_selected = ( tabnr == tabpagenr() ) 
 			endif
 
-			let tablabel_len = 0
+			let bufnr_list = tabpagebuflist( tabnr )
 
 
-			let modded = ''
-			for bufnum in buflist
-				if getbufvar( bufnum,  '&modified' ) != 0
-					let modded = '+'
-				endif
-			endfor
-
-			let is_selected = tabnr == tabpagenr()
-
-			let tabline_out .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
-
-
-			" ----------------------------------------
-			" Add an indicator that some buffer in the tab is modified:
-			"
-			let tablabel = ''
-			if s:verbose =~ 'modified' && modded != ''
-				let tablabel .= '%#TabModded#' . modded
-				let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
-				let maxlen = s:Set_maxlen( maxlen - 1 )
-			endif
-
-			let winnr = tabpagewinnr( tabnr )
+			let tab_curr_winnr = tabpagewinnr( tabnr )
 			let numwins = tabpagewinnr( tabnr, ("$") )
 
 
+			let tablabel = ''
+			let tablabel_len = 0
+
+			let tablabel .= is_selected ? '%#TabLineSel#' : '%#TabLine#'
 
 
-			" ----------------------------------------
-			" Misc values, i.e. the number of windows in the tab:
+			" ------------------------------------------------------------
+			" Add an indicator that some buffer in the tab is modified:
 			"
 
+			let s:tabline_pieces[tabnr].modded_chars = ''
+			for bufnr in bufnr_list
+				if s:verbose =~ 'modified' && getbufvar( bufnr,  '&modified' ) > 0
+					let s:tabline_pieces[tabnr].modded_chars = '+'
+					let tablabel .= '%#TabModded#'
+								\ . "+"
+								\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+					let tablabel_len += 1
+					break
+				endif
+			endfor
+
+
+
+			" ------------------------------------------------------------
+			" Misc values
+			"
+
+			let s:tabline_pieces[tabnr].misc_vals = ''
+
 			let numwins_out = ''
-			if is_selected == 0 && s:verbose =~ 'windows'  && len( buflist ) > 1
+			if is_selected == 0 && s:verbose =~ 'windows'  && len( bufnr_list ) > 1
 				let numwins_out = numwins
-				let maxlen = s:Set_maxlen( maxlen - strlen( numwins_out ) )
 			endif
 
 			let tabnr_out = ''
 			if s:verbose =~ 'tabnr' && is_selected
 				let tabnr_out .= 't' . tabnr 
-				let maxlen = s:Set_maxlen( maxlen - strlen( tabnr_out ) )
 			endif
 
 			let winnr_out = ''
 			if s:verbose =~ 'winnr' && is_selected
-				let winnr_out .= 'w' . winnr 
-				let maxlen = s:Set_maxlen( maxlen - strlen( winnr_out ) )
+				let winnr_out .= 'w' . tab_curr_winnr 
 			endif
 
 			let bufnr_out = ''
 			if s:verbose =~ 'bufnr' && is_selected
-				let bufnr_out .= 'b' . winbufnr( winnr )
-				let maxlen = s:Set_maxlen( maxlen - strlen( bufnr_out ) )
+				if s:is_gui
+					let bufnr_out .= 'b' . s:bufenter_bufnr
+				else
+					let bufnr_out .= 'b' . winbufnr( tab_curr_winnr )
+				endif
 			endif
 
- 
-			let r_brac = ''
-			let l_brac = ':'
+
 			let out_list = [ numwins_out, tabnr_out, winnr_out, bufnr_out ]
 			let out_list = filter( out_list, 'v:val != "" ' )
-			let misc_vals = '' 
 			if len( out_list ) > 0
-				let misc_vals = r_brac
-						\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
-						\ . join( out_list , ',' )
-						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-						\ . l_brac
-				let tablabel_len +=
-						\ strlen( r_brac . join( out_list , ',' ) . l_brac )
-
+				let s:tabline_pieces[tabnr].misc_vals = join( out_list , ',' )
 			endif
-			" end misc values
-
-			let tablabel .= misc_vals
 
 
+			if s:tabline_pieces[tabnr].misc_vals != ''
+				let r_brac = ''
+				let l_brac = ':'
+				let tablabel .= 
+							\   r_brac
+							\ . ( is_selected ? '%#TabWinNumSel#' : '%#TabWinNum#' )
+							\ . s:tabline_pieces[tabnr].misc_vals
+							\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+							\ . l_brac
 
+				let tablabel_len += strlen( s:tabline_pieces[tabnr].misc_vals
+							\ . r_brac . l_brac )
+			endif
 
-
-			" ----------------------------------------
-			"  Add buffer name(s)
 			"
+			" End Misc values, i.e. the number of windows in the tab:
 			"
-			let winnr_start = 1
-			let winnr_stop = numwins
-			if s:verbose !~ 'buffers_list'
-				let winnr_start = winnr
-				let winnr_stop = winnr
+			" ------------------------------------------------------------
+
+
+
+
+
+			" ------------------------------------------------------------
+			"
+			" Gather bufnames
+			"
+
+			"			let winnr_start = 1
+			"			let winnr_stop = numwins
+			"			if s:verbose !~ 'buffers_list'
+			"				let winnr_start = tab_curr_winnr
+			"				let winnr_stop = tab_curr_winnr
+			"			endif
+
+
+			if s:is_gui
+				let s:tabline_pieces[tabnr].curr_bufnr = s:bufenter_bufnr
+			else
+				let s:tabline_pieces[tabnr].curr_bufnr =
+							\ bufnr_list[ tab_curr_winnr - 1 ]
 			endif
 
-			" subtract - numwins   to accound for commas:
-			let maxlen1 = ( ( maxlen - numwins + 1 ) / numwins )
-			if maxlen1 < g:TabLineSet_min2 
-				let winnr_start = winnr
-				let winnr_stop = winnr
+			if s:verbose =~ 'buffers_list'
+				let s:tabline_pieces[tabnr].bufnr_list = bufnr_list
+			else
+				let s:tabline_pieces[tabnr].bufnr_list = 
+							\ [ s:tabline_pieces[tabnr].curr_bufnr ]
 			endif
 
-			let bufname_list = []
-			let adj_maxlen = 0
-			for winnr1 in range( winnr_start, winnr_stop )
-				let tabbufnr = buflist[ winnr1 - 1]
-				let tabbufname = bufname( tabbufnr )
-				let tabbufname = fnamemodify( tabbufname, ':t' )
-				if tabbufname == ''
-					let tabbufname = '[No Name]'
-				endif
+			let save_tablabel_len = tablabel_len
 
+			let stop = 0
+			while !stop
+				"
+				" Loop is for resetting/growing bufnames into available space
+				" due to s:min_tab_len
 
-				if s:verbose =~ '\(tabnr\|winnr\|bufnr\)' 
-							\ && tabbufnr == winbufnr( winnr() )
-					let tabbufname = '>' . tabbufname
-				endif
+				let out_bufname_list = []
 
-				for elem in g:TabLineSet_bufname_filters
-					while len( elem ) < 3 | call add( elem, '' ) | endwhile
-					let tabbufname = substitute( tabbufname, 
-							\ elem[0], elem[1], elem[2] )
-				endfor
+				let tablabel_len = save_tablabel_len
 
-				call add( bufname_list, tabbufname )
-			endfor
+				for bufnr in s:tabline_pieces[tabnr].bufnr_list
+					let out_bufname = s:bufnames[ bufnr ]
+					let tablabel_len += strlen( out_bufname )
+					if is_selected
+								\ && s:verbose =~ '\(tabnr\|winnr\|bufnr\)' 
+								\ && s:tabline_pieces[tabnr].curr_bufnr == bufnr
+								\ && len( s:tabline_pieces[tabnr].bufnr_list ) > 1
 
-			" shrink the names in the list a bit/byte at a time, so the space
-			" is distributed evenly:
-			let tabbufnames = join( bufname_list, ',' )
-			while strlen( tabbufnames ) > maxlen
-				let longest = 0
-				let which = 0
-				for i in range( 0, len( bufname_list ) - 1 )
-					if strlen( bufname_list[ i ] ) > longest
-						let which = i
-						let longest = strlen( bufname_list[ i ] )
+						let out_bufname = 
+									\ '%#TabModded#' 
+									\ . '>'
+									\ . out_bufname
+									\ .  ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 					endif
+					call add( out_bufname_list, out_bufname )
 				endfor
-				let b = bufname_list[ which ]
-				let bufname_list[ which ] = strpart( b, 0, strlen( b ) - 1 )
-				let tabbufnames = join( bufname_list, ',' )
+
+				let sep = ''
+							\ . ( is_selected ? '%#TabPunctSel#' : '%#TabPunct#' )
+							\ . ','
+							\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+
+				let tabbufnames = join( out_bufname_list, sep )
+				let tablabel_len += 1 * len( out_bufname_list )		" add in separators len
+
+				"
+				" If there is extra space because of min_tab_len, grow the
+				" names if possible:
+				"
+				if tablabel_len < ( s:min_tab_len - 3 )
+					let bufs = {}
+					for bufnr in  s:tabline_pieces[tabnr].bufnr_list
+						let bufs[ bufnr ] = s:bufnames_orig[ bufnr ]
+					endfor
+					let bufs_len = strlen( join( values( bufs ), ',' ) )
+					"echomsg 'checking ' . string(bufs)
+					"echomsg bufs_len .' >  '. strlen( tabbufnames )
+					if bufs_len > strlen( tabbufnames )
+						let avail = ( s:min_tab_len - save_tablabel_len  -  3 )
+						let shrink = ( bufs_len - avail )
+						if shrink > 0
+							let bufs = s:Shrink_bufnames( bufs, shrink )
+						endif
+						for bufnr in  keys( bufs )
+							let s:bufnames[ bufnr ] = bufs[ bufnr ]
+						endfor
+						"echomsg 'reset ' . string(bufs)
+
+						" restart the loop to re-format and reset tablabel_len
+						continue
+					endif
+				endif
+
+				" end bufnames formatting section
+				" ------------------------------------------------------------
+				break
 			endwhile
 
-			call filter( bufname_list, 'v:val != ""')
-			call map( bufname_list, 'strpart( v:val, 0,  maxlen1 )' )
 
-			let sep = ''
-					\ . ( is_selected ? '%#TabPunctSel#' : '%#TabPunct#' )
-					\ . ','
-					\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-
-			let tabbufnames = join( bufname_list, ',' )
-
-			" Pad to _min
-			let len = strlen( tabbufnames )
-			while strlen( tabbufnames ) < g:TabLineSet_min 
-						\ && strlen( tabbufnames )< maxlen
-				let tabbufnames = tabbufnames . ' '
-			endwhile
-
-			"let tabbufnames = strpart( tabbufnames, 0,  maxlen )
-			let tablabel_len += strlen( tabbufnames )
-
-			let sep = ''
-					\ . ( is_selected ? '%#TabPunctSel#' : '%#TabPunct#' )
-					\ . ','
-					\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-
-			let tabbufnames = join( bufname_list, sep )
-
-			let tabbufnames = substitute( tabbufnames, '>',
-						\ '%#TabModded#' . '>'
-						\ .  ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-						\ , 'g' )
-
-			" end bufnames section
+			"echomsg 'min len ' . s:min_tab_len . ', label len ' . tablabel_len . ', s: ' . tabbufnames
+			let tab_pad = max( [ 0, s:min_tab_len - ( 3 + tablabel_len ) ] )
+			if tab_pad
+				"echomsg 'padding ' . tab_pad . ' for ' . tabbufnames
+				let tab_pad = repeat( ' ', tab_pad )
+				if !s:is_gui
+					let tabbufnames .= ''
+								\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+								\ . tab_pad
+				else
+					let tabbufnames .= tab_pad
+				endif
+			endif
 
 
 
 
+			let tablabel_len += tab_pad
 
-			" ----------------------------------------
+			let tabs_overflow += max( [ 0, ( 3 + tablabel_len ) - g:TabLineSet_max_tab_len ] )
+
+
+
+
+			" ------------------------------------------------------------
 			"  Closers
 			"
 			"
 			let tabexit = ''
-			if s:verbose =~ 'closers'
+			if s:verbose =~ 'closers' && !s:is_gui
 				let tabexit .= ( is_selected ? '%#TabExitSel#' : '%#TabExit#' )
 							\ . '%' . tabnr . 'X!%X'
-				"let maxlen = s:Set_maxlen( maxlen - 1 )
-				let tablabel_len  += 1
-				let tablabel .= ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+				let tabexit .= ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
 			endif
 
 
-			" ----------------------------------------
+
+
+			" ------------------------------------------------------------
 			"  Put the pieces together
 			"
+			if !s:is_gui
+				let tablabel_len += 2
+				let tablabel = '%' . ( tabnr ) . 'T'
+							\ . tabexit . tablabel . ' ' . tabbufnames
+							\ . '%T'
+							\ . '%#TabSep#' . '|'
+							\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
+				"
+				" Note: it's important to have the final %T before
+				" the separator char, '|', so it won't be a part
+				" of the tab, and therefore won't help the
+				" wrapping function to break correctly.
+			else
+				let tablabel .= tabbufnames
+			endif
 
-			" set the tab page number (for mouse clicks)
-
-			let tablabel = '%' . ( tabnr ) . 'T'
-						\ . tabexit . tablabel . ' ' . tabbufnames
-
-			let tablabel .= '%#TabSep#' . '|'
-						\ . ( is_selected ? '%#TabLineSel#' : '%#TabLine#' )
-			let tablabel .= '%T'
-			let tablabel_len += 2
 
 
+			" ------------------------------------------------------------
+			"  Tab label custom regex:
+			"
 			for elem in g:TabLineSet_tab_filters
 				while len( elem ) < 3 | call add( elem, '' ) | endwhile
 				let tablabel = substitute( tablabel, 
-						\ elem[0], elem[1], elem[2] )
+							\ elem[0], elem[1], elem[2] )
 			endfor
 
-			let tabline_out .= tablabel
 
 
-			if g:TabLineSet_max_wrap > 1
-"				echomsg 'here, out_pos='.  g:TabLineSet_out_pos 
-"						\ . ', label len=' . tablabel_len
-"						\ . ', g:TabLineSet_col=' . g:TabLineSet_col
-"						\ . ', new row=' . ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
+
+			" ------------------------------------------------------------
+			"
+			"  Start of length calculation
+			"
+			"			let total += strlen( s:tabline_pieces[tabnr].modded_chars )
+			"			let total += strlen( join( s:tabline_pieces[tabnr].bufnr_list, ',' ) )
+			"			let total += s:tabline_pieces[tabnr].curr_bufnr > 0 
+			"			let total += strlen( r_brac . s:tabline_pieces[tabnr].misc_vals . l_brac )
+			"			let total += s:verbose =~ 'closers' && !s:is_gui
+
+
+
+
+
+
+			" ------------------------------------------------------------
+			"  Handle tab wrapping:
+			"
+			if !s:is_gui && g:TabLineSet_max_wrap > 1
+
+				" compensate for trailing line space on wrapped tablines
+				" created by the internal wrapping [patch]
+				"
 				if ( ( g:TabLineSet_out_pos + tablabel_len + 1 ) / &columns )
-				\ > g:TabLineSet_row 
+							\ > g:TabLineSet_row 
 					let g:TabLineSet_row += 1
 					let g:TabLineSet_out_pos += &columns - g:TabLineSet_col
-					"echomsg 'adding' . ( &columns - g:TabLineSet_col )
 					let g:TabLineSet_idxs .= 
 								\ repeat( ' ', &columns - g:TabLineSet_col )
 					let g:TabLineSet_col = 0
 				endif
 			endif
 
-			let g:TabLineSet_col += tablabel_len
 
+			let s = substitute( tablabel, '%#[^#]*#', '', 'g' )
+			let s = substitute( s, '%\d*[=XT]', '', 'g' )
+			let tablabel_len = strlen( s )
+
+
+			let g:TabLineSet_col += tablabel_len
 			let g:TabLineSet_out_pos += tablabel_len
 			let g:TabLineSet_idxs .= repeat( tabnr, tablabel_len )
 
-		endfor		" for tabnr in range( 1, tabpagenr('$') )
+
+			let g:TabLineSet_tablabels[ tabnr ] = tablabel
 
 
-		" ------------------------------
+
+
+		endfor " for tabnr in tabnrs
+		"
+		" --------------------------------------------------
+
+
+
+		if s:is_gui
+			" This wigs out the gui labels after a certain size.
+		else
+			for tabnr in tabnrs
+				let tabline_out .= g:TabLineSet_tablabels[ tabnr ]
+			endfor
+		endif
+
+
+
+		" --------------------------------------------------
 		"  Final formatting
 		"
 		" after the last tab fill with TabLineFill and reset tab page nr
-		let tabline_out .= '%#TabLineFillEnd#'
-
-
-		"let last_close = repeat(' ', &columns - g:TabLineSet_col )
 		let last_close = ''
-		if tabpagenr('$') > 1 && s:verbose == ''
-			let last_close .= '%=%#TabLine#%999X!X%X%##'
-		endif
-		let g:TabLineSet_out_pos += 2
+		if !s:is_gui
+			let tabline_out .= '%#TabLineFillEnd#'
 
-		if exists('&mousefunc') 			" tabline called from in mousefunc? && &mousefunc != ''
+			"let last_close = repeat(' ', &columns - g:TabLineSet_col )
+			if tabpagenr('$') > 1 && s:verbose == ''
+				let last_close .= '%=%#TabLine#%999X!X%X%##'
+			endif
+			let g:TabLineSet_out_pos += 2
+		endif
+
+		if !s:is_gui && exists('&mousefunc') 			
+			" tabline called from in mousefunc? && &mousefunc != ''
 			if g:TabLineSet_max_wrap > 1
 				let last_close .= ' <-'
 				let g:TabLineSet_out_pos += 2
@@ -665,51 +863,246 @@ function! TabLineSet_main( ... )
 			let last_close .= s
 		endif
 
-		let avail = ( usable_columns - 1 ) - g:TabLineSet_out_pos - ( last_close == '' ? 2 : 0 )
+
+		let a = ( usable_columns - 1 ) 
+					\ - g:TabLineSet_out_pos 
+					\ - ( last_close == '' ? 2 : 0 )
 
 		if g:TabLineSetFillerFunc != '' && s:verbose =~ 'filler_func'
-			let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . avail . ')}'
+			let tabline_out .= '%{' . g:TabLineSetFillerFunc . '(' . a . ')}'
 		endif
 
 		let tabline_out .= last_close
 
 
-		" too slow:
-		"let maxlen_start = maxlen_start + 1
-		let maxlen_start = maxlen_start + ( avail / numtabs )
 
-	endwhile " extend maxlen 
+		let g:TabLineSet_output_pre = tabline_out
+
+		for elem in g:TabLineSet_tabline_filters 
+			while len( elem ) < 3 | call add( elem, '' ) | endwhile
+			let tabline_out = substitute( tabline_out, 
+						\ elem[0], elem[1], elem[2] )
+		endfor
+
+		let g:TabLineSet_output_post = tabline_out
+
+		if g:TabLineSet_postproc_func != ''
+			call call( g:TabLineSet_postproc_func, [ tabline_out ] )
+		endif
 
 
-	let g:TabLineSet_output_pre = tabline_out
+		let s = substitute( tabline_out, '%#[^#]*#', '', 'g' )
+		let s = substitute( s, '%\d*[=XT]', '', 'g' )
 
-	for elem in g:TabLineSet_tabline_filters 
-		while len( elem ) < 3 | call add( elem, '' ) | endwhile
-		let tabline_out = substitute( tabline_out, 
-					\ elem[0], elem[1], elem[2] )
-	endfor
 
-	let g:TabLineSet_output_post = tabline_out
+		let s:overflow = strlen( s ) - s:avail 
+		"echomsg 's:' . s
+		"echomsg 'avail:' . s:avail . ', overflow end ' . s:overflow
+		"echomsg 's len:' . strlen(s)
 
-	if g:TabLineSet_postproc_func != ''
-		call call( g:TabLineSet_postproc_func, [ tabline_out ] )
+		"let g:TabLineSet_out_pos += tablabel_len
+		if loop == 3 && s:overflow > 0
+			let verbose = ""
+			continue
+		endif
+		if loop == 5 && s:overflow > 0
+			"echomsg 'clearing min tab len ..........'
+			let s:min_tab_len = 1
+			continue
+		endif
+
+		if s:overflow < tabs_overflow
+			let s:overflow = tabs_overflow
+		endif
+
+		if s:overflow > 0
+			let s:bufnames = s:Shrink_bufnames( s:bufnames, s:overflow + 1 )
+		endif
+		"echomsg 'tabs o '.tabs_overflow
+
+		"echomsg 'shrunk ' . string( s:bufnames )
+
+
+		if s:longest_bufname < g:TabLineSet_verbose_auto 
+			let s:save_verbose = s:verbose
+			let s:verbose = '' 
+			"echomsg 'verbose off'
+			call s:Fill_bufnames()
+			"		elseif s:verbose == ''
+			"		\ && s:longest_bufname >= g:TabLineSet_verbose_auto 
+			"			let s:verbose = s:save_verbose
+			"			echomsg 'verbose on'
+			"			call s:Fill_bufnames()
+		endif
+
+	endwhile " big loop
+
+	if s:is_gui && v:lnum > 0
+		return g:TabLineSet_tablabels[ v:lnum ]
 	endif
-
-"	let s:test_count += 1
-"	if s:last_out == tabline_out
-"		echo s:test_count . ', is same'
-"	else
-"		echo s:test_count . ', is not same'
-"	endif
-"	let s:last_out = tabline_out
 
 	return tabline_out
 
 endfunction
 
-let s:last_out = ''
 
 " End main function  }}}
+
+
+
+
+
+" ------------------------------------------------------------
+" Fill bufnames{} 
+"
+let s:bufnames = {}
+let s:bufnames_orig = {}
+
+function! s:Fill_bufnames()
+
+	let s:bufnames = {}
+
+	for tabnr in range( 1, tabpagenr('$') )
+
+		"let winnr_start = 1
+		"let winnr_stop = tabpagewinnr( tabnr, "$")
+
+		"?for winnr1 in range( winnr_start, winnr_stop )
+		for bufnr in tabpagebuflist( tabnr )
+			"let bufnr = winbufnr( winnr1 )
+			let bufname = bufname( bufnr )
+			if s:verbose =~ 'full_path'
+				let bufname = fnamemodify( bufname, ':p' )
+			else
+				let bufname = fnamemodify( bufname, ':t' )
+			endif
+			if bufname == ''
+				let bufname = '[No Name]'
+			endif
+
+			while strlen( bufname ) < g:TabLineSet_min 
+				let bufname .= ' '
+			endwhile
+
+			" Custom regex:
+			"
+			for elem in g:TabLineSet_bufname_filters
+				while len( elem ) < 3 | call add( elem, '' ) | endwhile
+				let bufname = substitute( bufname, 
+							\ elem[0], elem[1], elem[2] )
+			endfor
+
+			let s:bufnames[ bufnr ] = bufname
+		endfor
+	endfor
+
+	let s:bufnames_orig = deepcopy( s:bufnames )
+
+endfunction
+"
+" End Fill bufnames{} 
+"
+" ------------------------------------------------------------
+
+
+
+
+
+function! s:abs( i )
+	return max( [ a:i, -1 * a:i ] )
+endfunction
+
+" ------------------------------------------------------------
+"
+" Shrink the names to fit available columns
+"
+let s:longest_bufname = 0
+"let s:shortest_bufname = 0
+
+function! s:Shrink_bufnames( bufnames, shrink )
+
+	let bufnames = a:bufnames
+
+	function! Dict_by_strlen(i1, i2)
+		let len1 = strlen( s:sort_dict[ a:i1 ] )
+		let len2 = strlen( s:sort_dict[ a:i2 ] )
+		return len1 == len2 ? 0 : len1 > len2 ? 1 : -1
+	endfunction
+
+	let s:sort_dict = bufnames
+	let bufnames_keys_by_len = reverse( sort( keys( s:sort_dict ), "Dict_by_strlen") )
+
+	let bufnames_count = min( [ 5, len( bufnames_keys_by_len ) ] )
+	if bufnames_count < 1 | return [] | endif
+	let s:longest_bufname = strlen( bufnames[ bufnames_keys_by_len[0] ] )
+"	let s:shortest_bufname = s:longest_bufname
+	let bufnames_joined_len = strlen( join( values( bufnames ), '' ) )
+	let shrink = s:abs( a:shrink )
+	let reduced_total = 0
+	let loop_counter = 0
+
+	"echomsg string( bufnames_keys_by_len )
+	"echomsg string( bufnames )
+	"echomsg 'longest ..... ' . s:longest_bufname
+	
+	"while bufnames_joined_len >= a:avail
+	while reduced_total < shrink
+		let reduced = 0
+		" Too slow to use increment of 1, so:
+
+		"let incr = s:longest_bufname * ( ( shrink - reduced_total ) / bufnames_count )
+		let incr = ( shrink - reduced_total ) / bufnames_count
+
+		let incr = min( [ incr, ( s:longest_bufname / 2 ) ] )
+		if incr < 1 | let incr = 1 | endif
+
+		"echomsg ' shrink:' . shrink . ', total:'.reduced_total . '=' . ( shrink -reduced_total) . ', incr:' . incr . ', bufn len:' . bufnames_count
+		" Preserves sorted order for keys:
+		for bufnr in bufnames_keys_by_len
+			if strlen( bufnames[ bufnr ] ) >= s:longest_bufname
+
+	let loop_counter += 1
+	"echomsg 'cutting ' . bufnames[bufnr] . ', len=' . strlen( bufnames[ bufnr ] ) . ', longest='  . s:longest_bufname . ', incr=' . incr
+
+
+
+"				if strlen( bufnames[ bufnr ]  ) == 0
+"					"continue
+"				else
+"					let s:shortest_bufname = 
+"						\ min( [ s:shortest_bufname, strlen( bufnames[ bufnr ]  ) - incr ] )
+"				endif
+				if bufnames[ bufnr ] =~ '[/\\]'
+					let bufnames[ bufnr ]  = bufnames[ bufnr ][ incr :]
+				else
+					let bufnames[ bufnr ]  = bufnames[ bufnr ][0:0 - incr - 1]
+				endif
+				let reduced += incr
+				let reduced_total += incr
+				let bufnames_joined_len -= incr
+			
+				"if bufnames_len < a:avail
+				if reduced_total < shrink
+					break
+				endif
+			else
+			endif
+		endfor
+		if !reduced 
+			let s:longest_bufname -= incr
+		endif
+	endwhile
+	"echomsg 'shrink loop count ' .  loop_counter 
+
+	return bufnames
+	
+endfunction
+"
+" End Shrink the names to fit available columns
+"
+" ------------------------------------------------------------
+
+
 
 
 
@@ -754,16 +1147,6 @@ endfunction
 " 
 
 
-function! s:Set_maxlen( maxlen )
-	if a:maxlen < g:TabLineSet_verbose_auto 
-		let s:verbose = '' 
-	endif
-	let ret = max( [ 2, a:maxlen ] )
-	return ret
-endfunction
-
-
-
 function! TabLineSetFillerNull( avail )
 	return ''
 endfunction
@@ -793,6 +1176,8 @@ function! TabLineSet_verbose_toggle()
 	call s:Force_tabline_update()
 endfunction
 
+
+
 " Have it split up to use this internally, when a "1 new" will fail in the
 " sandbox.
 function! TabLineSet_verbose_toggle0()
@@ -805,6 +1190,8 @@ function! TabLineSet_verbose_toggle0()
 	endif
 
 endfunction
+
+
 
 function! s:Force_tabline_update()
 	" Make it update:
@@ -826,6 +1213,8 @@ function! TabLineSet_verbose_rotate()
 	let g:TabLineSet_verbose = join( 
 				\g:TabLineSet_verbose_sets[ s:all_verbose_sets_idx ], ',' )
 	"silent! normal! gtgT
+	echomsg 'Tabline options: ' . g:TabLineSet_verbose
+	call s:Fill_tab_labels()
 	1new
 	quit
 endfunction
@@ -844,6 +1233,11 @@ endfunction
 
 
 set tabline=%!TabLineSet_main()
+set guitablabel=%!TabLineSet_main()
+"set guitablabel=%!TabLineSet_main()
+if exists('&guitabtooltip')
+	set guitabtooltip=%!TabLineSet_guitabtooltip()
+endif
 
 if &showtabline < 1
 	set showtabline=1	" 2=always
@@ -918,5 +1312,81 @@ call TabLineSet_hl_init()
 
 
 
+function! TabLineSet_guitabtooltip()
+
+	let tabnr = v:lnum
+
+	"let numwins_out = tabpagewinnr( tabnr, "$" )
+	let label = ''
+
+	for winnr in range( 1, tabpagewinnr( tabnr, "$" ) )
+		"for bufnr in tabpagebuflist( tabnr )
+		let bufnr = winbufnr( winnr )
+
+		let tabnr_out = ''
+		if g:TabLineSet_verbose =~ 'tabnr'
+			let tabnr_out = 't' . tabnr 
+		endif
+		let winnr_out = ''
+		if g:TabLineSet_verbose =~ 'winnr'
+			let winnr_out = 'w' . winnr 
+		endif
+		let bufnr_out = ''
+		if g:TabLineSet_verbose =~ 'bufnr'
+			let bufnr_out = 'b' . bufnr
+		endif
 
 
+		let out_list = [ tabnr_out, winnr_out, bufnr_out ]
+		let out_list = filter( out_list, 'v:val != "" ' )
+
+		if len( out_list ) > 0
+			let misc_vals = join( out_list , ',' )
+			let r_brac = ''
+			let l_brac = ':'
+			let label .= 
+						\   r_brac
+						\ . misc_vals
+						\ . l_brac
+		endif
+
+		if g:TabLineSet_verbose =~ 'full_path'
+			let label .= fnamemodify( bufname( bufnr ), ':p' ) 
+		else
+			let label .= fnamemodify( bufname( bufnr ), ':t' ) 
+		endif
+
+		"let label .= "\r\n\<nl>"
+		"let label .= "\<eol>"
+		let label .= " ; "
+	endfor
+	return label
+endfunction
+
+aug TabLineSet_au
+	au!
+	au BufEnter * call TabLineSet_BufEnter()
+	au WinEnter * call TabLineSet_WinEnter()
+aug END
+
+
+" This is for the GUI tabs, which don't have information on what is the
+" current notion of tab/winnr
+function! TabLineSet_BufEnter()
+	let s:bufenter_tabnr = tabpagenr()
+	let s:bufenter_winnr = winnr()
+	let s:bufenter_bufnr = bufnr("%")
+	"echomsg 't ' .s:bufenter_tabnr . ', w ' . s:bufenter_winnr . ', b ' . s:bufenter_bufnr 
+endfunction
+
+function! TabLineSet_WinEnter()
+	call TabLineSet_BufEnter()
+endfunction
+
+call TabLineSet_BufEnter()
+
+
+
+
+"let g:TabLineSet_tab_status = {}
+"let g:TabLineSet_min_tab_len = 30
